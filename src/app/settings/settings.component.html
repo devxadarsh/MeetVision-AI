@@ -1,0 +1,864 @@
+<div class="settings-container">
+  <!-- Header -->
+  <header class="settings-header">
+    <div class="header-content">
+      <div class="header-badge">Preferences</div>
+      <h1 class="header-title">QuestionLens Configuration</h1>
+      <p class="header-desc">
+        Manage your context profile, AI models, and secure credentials.
+      </p>
+    </div>
+
+    <div class="header-actions">
+      <button
+        type="button"
+        class="btn-secondary"
+        (click)="resetDefaults()"
+        title="Reset to default configuration"
+      >
+        Defaults
+      </button>
+      <button
+        type="button"
+        class="btn-primary"
+        (click)="saveSettings()"
+        [disabled]="isSaving()"
+      >
+        @if (isSaving()) {
+          Saving...
+        } @else {
+          Save Changes
+        }
+      </button>
+    </div>
+  </header>
+
+  <!-- Toast Feedback -->
+  @if (toastMessage()) {
+    <div class="toast-banner" [class.success]="toastType() === 'success'">
+      {{ toastMessage() }}
+    </div>
+  }
+
+  <div class="settings-body">
+    <!-- Navigation Tabs -->
+    <nav class="settings-tabs">
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'profile'"
+        (click)="activeTab.set('profile')"
+      >
+        👤 Context Profile
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'ai'"
+        (click)="activeTab.set('ai')"
+      >
+        🤖 AI & Models
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'overlay'"
+        (click)="activeTab.set('overlay')"
+      >
+        🪟 Overlay Sizing
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'knowledge'"
+        (click)="activeTab.set('knowledge')"
+      >
+        📚 Knowledge Base
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'keys'"
+        (click)="activeTab.set('keys')"
+      >
+        🔐 API Keys & Security
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'privacy'"
+        (click)="activeTab.set('privacy')"
+      >
+        🛡️ Privacy & Storage
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'diagnostics'"
+        (click)="switchTab('diagnostics')"
+      >
+        📊 Diagnostics
+      </button>
+    </nav>
+
+    <!-- Tab 1: Context Profile (FR-62) -->
+    @if (activeTab() === 'profile') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Context Profile</h2>
+          <p>
+            Tailors real-time talking points and code answers to your specific role and project domain.
+          </p>
+        </div>
+
+        <!-- Role Input -->
+        <div class="form-group">
+          <label for="role-input" class="form-label">Professional Role</label>
+          <input
+            id="role-input"
+            type="text"
+            class="form-input"
+            placeholder="e.g. Staff Software Engineer, Tech Lead, Product Manager"
+            [value]="role()"
+            (input)="onRoleChange($event)"
+          />
+          <span class="field-hint">
+            Informs the technical depth, strategic perspective, and vocabulary of generated answers.
+          </span>
+        </div>
+
+        <!-- Tone Selector -->
+        <div class="form-group">
+          <label class="form-label">Answer Tone</label>
+          <div class="pill-group">
+            <button
+              type="button"
+              class="pill-btn"
+              [class.active]="tone() === 'concise'"
+              (click)="tone.set('concise')"
+            >
+              ⚡ Concise
+            </button>
+            <button
+              type="button"
+              class="pill-btn"
+              [class.active]="tone() === 'friendly'"
+              (click)="tone.set('friendly')"
+            >
+              😊 Friendly
+            </button>
+            <button
+              type="button"
+              class="pill-btn"
+              [class.active]="tone() === 'formal'"
+              (click)="tone.set('formal')"
+            >
+              👔 Formal
+            </button>
+          </div>
+          <span class="field-hint">
+            Adjusts sentence phrasing and tone for different meeting environments.
+          </span>
+        </div>
+
+        <!-- Project Summary -->
+        <div class="form-group">
+          <label for="summary-input" class="form-label">Project / Domain Context</label>
+          <textarea
+            id="summary-input"
+            class="form-textarea"
+            rows="4"
+            placeholder="Briefly describe your current architecture, tech stack, roadmap, and core goals..."
+            [value]="projectSummary()"
+            (input)="onSummaryChange($event)"
+          ></textarea>
+          <span class="field-hint">
+            Injected into the meeting assistant context to ground answers in your actual systems.
+          </span>
+        </div>
+
+        <!-- Domain Glossary -->
+        <div class="form-group">
+          <label for="glossary-input" class="form-label">Domain Glossary & Keywords</label>
+          <div class="glossary-chips">
+            @for (term of glossary(); track term) {
+              <span class="glossary-chip">
+                {{ term }}
+                <button
+                  type="button"
+                  class="chip-remove"
+                  (click)="removeGlossaryTerm(term)"
+                  title="Remove term"
+                >
+                  ×
+                </button>
+              </span>
+            }
+          </div>
+
+          <div class="glossary-input-row">
+            <input
+              id="glossary-input"
+              type="text"
+              class="form-input"
+              placeholder="Add keyword or acronym (e.g. idempotency, canary, p99) and press Add"
+              [value]="newGlossaryTerm()"
+              (input)="onNewGlossaryChange($event)"
+              (keydown.enter)="addGlossaryTerm()"
+            />
+            <button
+              type="button"
+              class="btn-secondary add-btn"
+              (click)="addGlossaryTerm()"
+            >
+              Add Term
+            </button>
+          </div>
+        </div>
+      </section>
+    }
+
+    <!-- Tab 2: AI & Models (FR-61) -->
+    @if (activeTab() === 'ai') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Model & Generation Controls</h2>
+          <p>Configure speech-to-text engines and LLM inference parameters.</p>
+        </div>
+
+        <!-- STT Provider -->
+        <div class="form-group">
+          <label for="stt-provider" class="form-label">Speech-to-Text Engine</label>
+          <select
+            id="stt-provider"
+            class="form-select"
+            [value]="sttProvider()"
+            (change)="onSttProviderChange($event)"
+          >
+            <option value="simulation">Meeting Dialogue Simulation (Offline / Dev)</option>
+            <option value="deepgram">Deepgram WebSocket Streaming (Live Loopback Audio)</option>
+          </select>
+          <span class="field-hint">
+            Deepgram requires a valid API key configured in the API Keys tab.
+          </span>
+        </div>
+
+        <!-- STT Language (Milestone 7) -->
+        <div class="form-group">
+          <label for="stt-language" class="form-label">Audio Language Model</label>
+          <select
+            id="stt-language"
+            class="form-select"
+            [value]="sttLanguage()"
+            (change)="onSttLanguageChange($event)"
+          >
+            <option value="en">English (General / Technical / US & UK)</option>
+            <option value="hi">Hindi (हिन्दी)</option>
+            <option value="multi">Multilingual / Automatic Detection (Hinglish, Code-switching)</option>
+          </select>
+          <span class="field-hint">
+            Configures Deepgram nova-2 streaming language detection and speaker diarization.
+          </span>
+        </div>
+
+        <!-- LLM Provider -->
+        <div class="form-group">
+          <label for="llm-provider" class="form-label">Language Model Engine</label>
+          <select
+            id="llm-provider"
+            class="form-select"
+            [value]="llmProvider()"
+            (change)="onLlmProviderChange($event)"
+          >
+            <option value="local">Local Streaming Generator (Instant / Offline)</option>
+            <option value="anthropic">Anthropic Claude (Official Claude Messages API)</option>
+          </select>
+        </div>
+
+        <!-- Claude Model -->
+        <div class="form-group">
+          <label for="llm-model" class="form-label">Model Identifier</label>
+          <select
+            id="llm-model"
+            class="form-select"
+            [value]="llmModel()"
+            (change)="onLlmModelChange($event)"
+          >
+            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
+            <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fastest)</option>
+            <option value="claude-3-opus-20240229">Claude 3 Opus (Deep Analysis)</option>
+          </select>
+        </div>
+
+        <!-- Temperature Slider -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="temp-slider" class="form-label">Temperature: {{ temperature() }}</label>
+            <span class="slider-value-badge">
+              {{ temperature() <= 0.3 ? 'Deterministic' : 'Creative' }}
+            </span>
+          </div>
+          <input
+            id="temp-slider"
+            type="range"
+            min="0.0"
+            max="1.0"
+            step="0.05"
+            class="form-slider"
+            [value]="temperature()"
+            (input)="onTemperatureChange($event)"
+          />
+          <span class="field-hint">
+            Lower values (0.2–0.3) yield concise, grounded answers; higher values produce varied talking points.
+          </span>
+        </div>
+
+        <!-- Max Tokens -->
+        <div class="form-group">
+          <label for="tokens-input" class="form-label">Max Output Tokens</label>
+          <input
+            id="tokens-input"
+            type="number"
+            min="100"
+            max="1500"
+            step="50"
+            class="form-input"
+            [value]="maxTokens()"
+            (input)="onMaxTokensChange($event)"
+          />
+          <span class="field-hint">
+            Caps the response size for rapid bullet streaming during meetings (default: 500).
+          </span>
+        </div>
+      </section>
+    }
+
+    <!-- Tab: Overlay Sizing & Dimensions -->
+    @if (activeTab() === 'overlay') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Overlay Dimensions & Layout</h2>
+          <p>
+            Adjust the length (height) and width of the floating meeting overlay to match your screen resolution and preferred reading space.
+          </p>
+        </div>
+
+        <!-- Quick Presets -->
+        <div class="form-group">
+          <label class="form-label">Dimension Presets</label>
+          <div class="preset-buttons-grid">
+            <button
+              type="button"
+              class="preset-btn"
+              [class.active]="overlayWidth() === 340 && overlayHeight() === 500"
+              (click)="applyOverlaySize(340, 500)"
+            >
+              <span class="preset-name">Compact</span>
+              <span class="preset-dimensions">340 × 500 px</span>
+            </button>
+            <button
+              type="button"
+              class="preset-btn"
+              [class.active]="overlayWidth() === 380 && overlayHeight() === 600"
+              (click)="applyOverlaySize(380, 600)"
+            >
+              <span class="preset-name">Standard</span>
+              <span class="preset-dimensions">380 × 600 px</span>
+            </button>
+            <button
+              type="button"
+              class="preset-btn"
+              [class.active]="overlayWidth() === 480 && overlayHeight() === 650"
+              (click)="applyOverlaySize(480, 650)"
+            >
+              <span class="preset-name">Wide</span>
+              <span class="preset-dimensions">480 × 650 px</span>
+            </button>
+            <button
+              type="button"
+              class="preset-btn"
+              [class.active]="overlayWidth() === 560 && overlayHeight() === 750"
+              (click)="applyOverlaySize(560, 750)"
+            >
+              <span class="preset-name">Expanded</span>
+              <span class="preset-dimensions">560 × 750 px</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Custom Width Slider & Input -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="width-slider" class="form-label">Overlay Width: {{ overlayWidth() }} px</label>
+            <span class="slider-value-badge">{{ overlayWidth() }}px</span>
+          </div>
+          <div class="dimension-input-row">
+            <input
+              id="width-slider"
+              type="range"
+              min="300"
+              max="1200"
+              step="10"
+              class="form-slider"
+              [value]="overlayWidth()"
+              (input)="onOverlayWidthChange($event)"
+            />
+            <input
+              type="number"
+              min="300"
+              max="1200"
+              step="10"
+              class="dimension-number-input"
+              [value]="overlayWidth()"
+              (input)="onOverlayWidthChange($event)"
+            />
+          </div>
+          <span class="field-hint">
+            Minimum 300px, maximum 1200px.
+          </span>
+        </div>
+
+        <!-- Custom Height (Length) Slider & Input -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="height-slider" class="form-label">Overlay Length (Height): {{ overlayHeight() }} px</label>
+            <span class="slider-value-badge">{{ overlayHeight() }}px</span>
+          </div>
+          <div class="dimension-input-row">
+            <input
+              id="height-slider"
+              type="range"
+              min="400"
+              max="1100"
+              step="10"
+              class="form-slider"
+              [value]="overlayHeight()"
+              (input)="onOverlayHeightChange($event)"
+            />
+            <input
+              type="number"
+              min="400"
+              max="1100"
+              step="10"
+              class="dimension-number-input"
+              [value]="overlayHeight()"
+              (input)="onOverlayHeightChange($event)"
+            />
+          </div>
+          <span class="field-hint">
+            Minimum 400px, maximum 1100px.
+          </span>
+        </div>
+
+        <div class="dimension-actions">
+          <button
+            type="button"
+            class="btn-primary"
+            (click)="applyOverlaySize(overlayWidth(), overlayHeight())"
+          >
+            Apply Dimensions
+          </button>
+        </div>
+
+        <div class="info-tip-box">
+          <span class="tip-icon">💡</span>
+          <span class="tip-text">
+            <strong>Interactive Drag Resizing:</strong> You can also drag the bottom-right corner grip icon on the floating overlay window at any time to fluidly resize width and length.
+          </span>
+        </div>
+      </section>
+    }
+
+    <!-- Tab: Knowledge Base (Milestone 7 / FR-44) -->
+    @if (activeTab() === 'knowledge') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <div class="header-with-action">
+            <div>
+              <h2>Local Knowledge Base (RAG)</h2>
+              <p>
+                Index architecture docs, API designs, and team runbooks into a zero-latency local vector/BM25 retrieval engine.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn-primary"
+              (click)="isAddingDoc.set(!isAddingDoc())"
+            >
+              {{ isAddingDoc() ? 'Cancel' : '+ Add Document' }}
+            </button>
+          </div>
+        </div>
+
+        @if (isAddingDoc()) {
+          <div class="add-doc-card">
+            <h3 class="add-doc-title">Add Reference Document</h3>
+
+            <div class="form-group">
+              <label for="doc-title-input" class="form-label">Document Title</label>
+              <input
+                id="doc-title-input"
+                type="text"
+                class="form-input"
+                placeholder="e.g. Payment Gateway Retry & Ledger Architecture"
+                [value]="newDocTitle()"
+                (input)="newDocTitle.set($any($event.target).value)"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="doc-category-input" class="form-label">Category / Domain Tag</label>
+              <input
+                id="doc-category-input"
+                type="text"
+                class="form-input"
+                placeholder="e.g. Architecture, Security, API Spec, Database"
+                [value]="newDocCategory()"
+                (input)="newDocCategory.set($any($event.target).value)"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="doc-content-input" class="form-label">Documentation Content / Snippets</label>
+              <textarea
+                id="doc-content-input"
+                class="form-textarea doc-textarea"
+                rows="6"
+                placeholder="Paste design specifications, service endpoints, circuit breaker thresholds, latency targets..."
+                [value]="newDocContent()"
+                (input)="newDocContent.set($any($event.target).value)"
+              ></textarea>
+              <span class="field-hint">
+                Paragraphs are automatically chunked and ranked by BM25 when meeting questions are detected.
+              </span>
+            </div>
+
+            <div class="add-doc-actions">
+              <button
+                type="button"
+                class="btn-secondary"
+                (click)="isAddingDoc.set(false)"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                [disabled]="!newDocTitle().trim() || !newDocContent().trim()"
+                (click)="addKnowledgeDoc()"
+              >
+                Index Document
+              </button>
+            </div>
+          </div>
+        }
+
+        <!-- Indexed Documents List -->
+        <div class="knowledge-list-header">
+          <span class="knowledge-count-badge">
+            {{ knowledgeDocs().length }} Document{{ knowledgeDocs().length === 1 ? '' : 's' }} Indexed
+          </span>
+          <span class="field-hint">Grounds AI answers in verified architecture documentation</span>
+        </div>
+
+        @if (knowledgeDocs().length === 0) {
+          <div class="empty-docs-box">
+            <div class="empty-docs-icon">📂</div>
+            <h3>No Documents in Knowledge Base</h3>
+            <p>
+              Add design docs or architecture notes above so the AI can retrieve authoritative facts when answering meeting questions.
+            </p>
+          </div>
+        } @else {
+          <div class="docs-grid">
+            @for (doc of knowledgeDocs(); track doc.id) {
+              <div class="doc-card">
+                <div class="doc-card-top">
+                  <div class="doc-badge">{{ doc.category }}</div>
+                  <button
+                    type="button"
+                    class="doc-remove-btn"
+                    title="Delete document"
+                    (click)="removeKnowledgeDoc(doc.id)"
+                  >
+                    🗑️
+                  </button>
+                </div>
+                <h4 class="doc-title">{{ doc.title }}</h4>
+                <p class="doc-preview">{{ doc.content }}</p>
+              </div>
+            }
+          </div>
+        }
+      </section>
+    }
+
+    <!-- Tab 3: API Keys & Encryption (FR-60) -->
+    @if (activeTab() === 'keys') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Secure Credentials</h2>
+          <p>
+            Credentials are encrypted using Electron
+            <code>safeStorage</code> via the OS Keychain (macOS Keychain / Windows DPAPI).
+          </p>
+        </div>
+
+        <!-- Encryption Status Banner -->
+        <div
+          class="encryption-badge"
+          [class.available]="isEncryptionAvailable()"
+        >
+          <span class="badge-icon">{{ isEncryptionAvailable() ? '🔒' : '⚠️' }}</span>
+          <div class="badge-text">
+            <span class="badge-strong">
+              {{ isEncryptionAvailable() ? 'Hardware Encryption Active' : 'Fallback Key Storage' }}
+            </span>
+            <span class="badge-desc">
+              {{
+                isEncryptionAvailable()
+                  ? 'Protected with native macOS Keychain / Windows Credential Manager'
+                  : 'Running in simulated environment'
+              }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Anthropic API Key -->
+        <div class="form-group">
+          <div class="label-row">
+            <label for="anthropic-key" class="form-label">Anthropic API Key</label>
+            @if (hasAnthropicKey()) {
+              <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
+            } @else {
+              <span class="key-status-pill empty">No Key Configured</span>
+            }
+          </div>
+          <div class="key-input-row">
+            <input
+              id="anthropic-key"
+              [type]="showAnthropicKey() ? 'text' : 'password'"
+              class="form-input mono"
+              placeholder="sk-ant-api03-..."
+              [value]="anthropicKeyInput()"
+              (input)="onAnthropicKeyChange($event)"
+            />
+            <button
+              type="button"
+              class="btn-secondary toggle-key-btn"
+              (click)="showAnthropicKey.set(!showAnthropicKey())"
+            >
+              {{ showAnthropicKey() ? 'Hide' : 'Show' }}
+            </button>
+          </div>
+          <span class="field-hint">
+            Never shared or stored unencrypted. Leave blank to retain currently saved key.
+          </span>
+        </div>
+
+        <!-- Deepgram API Key -->
+        <div class="form-group">
+          <div class="label-row">
+            <label for="deepgram-key" class="form-label">Deepgram API Key</label>
+            @if (hasDeepgramKey()) {
+              <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
+            } @else {
+              <span class="key-status-pill empty">No Key Configured</span>
+            }
+          </div>
+          <div class="key-input-row">
+            <input
+              id="deepgram-key"
+              [type]="showDeepgramKey() ? 'text' : 'password'"
+              class="form-input mono"
+              placeholder="Token for live loopback audio transcription"
+              [value]="deepgramKeyInput()"
+              (input)="onDeepgramKeyChange($event)"
+            />
+            <button
+              type="button"
+              class="btn-secondary toggle-key-btn"
+              (click)="showDeepgramKey.set(!showDeepgramKey())"
+            >
+              {{ showDeepgramKey() ? 'Hide' : 'Show' }}
+            </button>
+          </div>
+          <span class="field-hint">
+            Used for 16 kHz WebSocket streaming transcription during live calls.
+          </span>
+        </div>
+      </section>
+    }
+
+    <!-- Tab 4: Privacy & Storage (PRD Section 11) -->
+    @if (activeTab() === 'privacy') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Privacy, Legal & Data Handling</h2>
+          <p>Clear disclosures and controls over what leaves your device.</p>
+        </div>
+
+        <div class="privacy-box">
+          <div class="privacy-icon">🎙️</div>
+          <div class="privacy-content">
+            <h3>Zero Audio Storage Default</h3>
+            <p>
+              Meeting audio captured via the loopback pipeline is converted to linear PCM chunks in
+              memory, streamed directly to the speech-to-text engine, and immediately garbage-collected.
+              No audio files are ever written to your local disk.
+            </p>
+          </div>
+        </div>
+
+        <div class="privacy-box">
+          <div class="privacy-icon">🛡️</div>
+          <div class="privacy-content">
+            <h3>Screen-Share Exclusion</h3>
+            <p>
+              The overlay window uses native OS content protection (<code>setContentProtection(true)</code>)
+              to ensure talking points, question feeds, and transcript views remain completely invisible
+              to meeting participants on Zoom, Google Meet, and Teams screen shares.
+            </p>
+          </div>
+        </div>
+
+        <div class="privacy-box">
+          <div class="privacy-icon">🌐</div>
+          <div class="privacy-content">
+            <h3>Third-Party API Disclosures</h3>
+            <p>
+              When using Deepgram or Anthropic Claude, text segments and question prompts are sent to their
+              respective APIs via secure TLS. When using local simulation engines, zero network traffic leaves
+              your device.
+            </p>
+          </div>
+        </div>
+
+        <!-- Milestone 6: Purge All Data (PRD Section 11) -->
+        <div class="privacy-box danger-zone">
+          <div class="privacy-icon">🗑️</div>
+          <div class="privacy-content">
+            <h3>Purge Stored Data & Reset</h3>
+            <p>
+              Permanently deletes all encrypted API keys stored in your OS Keychain, resets context profiles,
+              wipes all cached transcripts, and resets first-run consent.
+            </p>
+            <div class="danger-actions">
+              <button
+                type="button"
+                class="btn-danger"
+                (click)="purgeAllData()"
+              >
+                Delete All Data & Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    }
+
+    <!-- Tab 5: System Diagnostics (Milestone 5) -->
+    @if (activeTab() === 'diagnostics') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <div class="header-with-action">
+            <div>
+              <h2>System Diagnostics & Health</h2>
+              <p>Live memory footprint, screen-capture exclusion, and runtime telemetry.</p>
+            </div>
+            <button
+              type="button"
+              class="btn-secondary refresh-btn"
+              (click)="loadDiagnostics()"
+              [disabled]="isLoadingDiagnostics()"
+            >
+              {{ isLoadingDiagnostics() ? 'Refreshing...' : '🔄 Refresh' }}
+            </button>
+          </div>
+        </div>
+
+        @if (diagnostics(); as diag) {
+          <div class="diag-grid">
+            <!-- Memory Footprint Card -->
+            <div class="diag-card">
+              <div class="diag-card-title">Memory Footprint (RSS)</div>
+              <div class="diag-card-value">
+                {{ diag.memoryUsageMb.rss }} <span class="diag-unit">MB</span>
+              </div>
+              <div class="diag-card-sub">
+                V8 Heap: {{ diag.memoryUsageMb.heapUsed }} / {{ diag.memoryUsageMb.heapTotal }} MB
+              </div>
+              <div class="diag-card-status" [class.healthy]="diag.memoryUsageMb.rss < 300">
+                {{ diag.memoryUsageMb.rss < 300 ? '● Within 300 MB Target' : '▲ Elevated Footprint' }}
+              </div>
+            </div>
+
+            <!-- Screen Protection Card -->
+            <div class="diag-card">
+              <div class="diag-card-title">Screen Capture Protection</div>
+              <div class="diag-card-value">
+                {{ diag.contentProtectionActive ? 'Active' : 'Disabled' }}
+              </div>
+              <div class="diag-card-sub">
+                setContentProtection(true)
+              </div>
+              <div class="diag-card-status" [class.healthy]="diag.contentProtectionActive">
+                {{ diag.contentProtectionActive ? '● Hidden from Screen-Share' : '▲ Screen Protection Inactive' }}
+              </div>
+            </div>
+
+            <!-- STT Pipeline Card -->
+            <div class="diag-card">
+              <div class="diag-card-title">Speech-to-Text Pipeline</div>
+              <div class="diag-card-value">
+                {{ diag.sttConnected ? 'Connected' : 'Reconnecting' }}
+              </div>
+              <div class="diag-card-sub">
+                16 kHz Audio Stream
+              </div>
+              <div class="diag-card-status" [class.healthy]="diag.sttConnected">
+                {{ diag.sttConnected ? '● Stream Operational' : '○ Disconnected' }}
+              </div>
+            </div>
+
+            <!-- Session Uptime Card -->
+            <div class="diag-card">
+              <div class="diag-card-title">Session Uptime</div>
+              <div class="diag-card-value">
+                {{ formatUptime(diag.uptimeSec) }}
+              </div>
+              <div class="diag-card-sub">
+                Active Windows: {{ diag.activeWindows }}
+              </div>
+              <div class="diag-card-status healthy">
+                ● Process Stable
+              </div>
+            </div>
+          </div>
+
+          <!-- System Details Box -->
+          <div class="diag-table-box">
+            <div class="diag-table-row">
+              <span class="diag-table-label">Host OS & Architecture:</span>
+              <span class="diag-table-value">{{ diag.platform }} ({{ diag.arch }})</span>
+            </div>
+            <div class="diag-table-row">
+              <span class="diag-table-label">Electron Framework:</span>
+              <span class="diag-table-value">v{{ diag.electronVersion }}</span>
+            </div>
+            <div class="diag-table-row">
+              <span class="diag-table-label">Chromium Engine:</span>
+              <span class="diag-table-value">v{{ diag.chromeVersion }}</span>
+            </div>
+            <div class="diag-table-row">
+              <span class="diag-table-label">Node Runtime:</span>
+              <span class="diag-table-value">v{{ diag.nodeVersion }}</span>
+            </div>
+          </div>
+        } @else {
+          <div class="diag-loading">Loading telemetry diagnostics...</div>
+        }
+      </section>
+    }
+  </div>
+</div>

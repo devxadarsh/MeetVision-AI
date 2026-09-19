@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.questionlens.desktop",
+  "productName": "QuestionLens",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/QuestionLens/browser/**/*",
+    "dist-electron/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64", "x64"]
+      }
+    ],
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "electron/entitlements.mac.plist",
+    "entitlementsInherit": "electron/entitlements.mac.inherit.plist",
+    "extendInfo": {
+      "NSMicrophoneUsageDescription": "QuestionLens requires microphone and meeting audio access to transcribe discussions and generate real-time talking points."
+    }
+  },
+  "dmg": {
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ]
+  },
+  "win": {
+    "target": ["nsis"]
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": false
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "questionlens",
+    "repo": "questionlens-desktop"
+  }
+}

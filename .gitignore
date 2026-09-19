@@ -2,6 +2,9 @@
 
 # Compiled output
 /dist
+/dist-electron
+/release
+.env
 /tmp
 /out-tsc
 /bazel-out
@@ -42,3 +45,6 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+AGENTS.md
+CLAUDE.md
+docs/PRD.md

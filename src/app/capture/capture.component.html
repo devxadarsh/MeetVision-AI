@@ -1,0 +1,60 @@
+<div class="capture-container">
+  <div class="header">
+    <span class="dot" [class.active]="isCapturing()"></span>
+    <h1>QuestionLens Audio Capture</h1>
+  </div>
+
+  <div class="status-card">
+    <div class="status-row">
+      <span class="label">Capture Status:</span>
+      <span class="value" [class.active]="isCapturing()">
+        {{ isCapturing() ? 'Capturing Audio' : 'Idle / Stopped' }}
+      </span>
+    </div>
+
+    <div class="status-row">
+      <span class="label">Audio Source:</span>
+      <span class="value">{{ sourceName() }}</span>
+    </div>
+
+    <div class="status-row">
+      <span class="label">Sample Rate:</span>
+      <span class="value">16 kHz Linear PCM (Mono)</span>
+    </div>
+
+    <div class="status-row">
+      <span class="label">Audio Level:</span>
+      <div class="meter-bar">
+        <div
+          class="meter-fill"
+          [style.width.%]="audioLevel() * 100"
+        ></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button
+      type="button"
+      class="btn primary"
+      (click)="toggleCapture()"
+    >
+      {{ isCapturing() ? 'Stop Capture' : 'Start Capture' }}
+    </button>
+
+    <button
+      type="button"
+      class="btn secondary"
+      (click)="simulateAudioBurst()"
+      title="Simulate speech audio chunk for testing"
+    >
+      Simulate Audio Pulse
+    </button>
+  </div>
+
+  @if (errorMessage()) {
+    <div class="error-box">
+      {{ errorMessage() }}
+    </div>
+  }
+</div>

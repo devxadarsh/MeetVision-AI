@@ -1,10 +1,22 @@
 {
   "name": "question-lens",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Meeting Overlay Assistant providing real-time question detection and answers invisible to screen shares",
+  "author": "QuestionLens Team",
+  "main": "dist-electron/main.js",
   "scripts": {
     "ng": "ng",
-    "start": "ng serve",
-    "build": "ng build",
+    "start": "npm run dev",
+    "dev": "concurrently -k -s first \"npm run dev:ng\" \"wait-on tcp:4200 && npm run dev:electron\"",
+    "dev:ng": "ng serve",
+    "dev:electron": "npm run build:electron && electron .",
+    "build": "npm run build:ng && npm run build:electron",
+    "build:ng": "ng build",
+    "build:electron": "node electron/build.mjs",
+    "package": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
@@ -17,6 +29,7 @@
     "@angular/forms": "^22.1.0",
     "@angular/platform-browser": "^22.1.0",
     "@angular/router": "^22.1.0",
+    "electron-updater": "^6.8.9",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
@@ -24,9 +37,15 @@
     "@angular/build": "^22.1.8",
     "@angular/cli": "^22.1.8",
     "@angular/compiler-cli": "^22.1.0",
+    "@types/node": "^26.6.2",
+    "concurrently": "^10.0.5",
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "jsdom": "^28.0.0",
     "prettier": "^3.8.1",
     "typescript": "~6.0.2",
-    "vitest": "^4.0.8"
+    "vitest": "^4.0.8",
+    "wait-on": "^9.1.0"
   }
 }

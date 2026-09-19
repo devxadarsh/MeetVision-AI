@@ -1,0 +1,504 @@
+    <div class="overlay-container" [class.click-through-active]="clickThroughActive()">
+      <!-- First-Run Legal & Privacy Consent Dialog (PRD Section 11 / Milestone 6) -->
+      @if (showConsentModal()) {
+        <div class="consent-modal-backdrop">
+          <div class="consent-modal-card">
+            <div class="consent-badge">Privacy & Legal Compliance</div>
+            <h2 class="consent-title">Welcome to QuestionLens</h2>
+            <p class="consent-desc">
+              Before activating meeting audio capture, please review our privacy and recording terms:
+            </p>
+
+            <ul class="consent-points">
+              <li>
+                <strong>🎙️ Zero Disk Storage:</strong> Audio captured from your meeting is held only ephemerally in RAM for transcription and immediately cleared. No audio files are ever written to disk.
+              </li>
+              <li>
+                <strong>🛡️ Screen-Share Protection:</strong> Native OS capture-protection is active, ensuring this overlay is excluded from Zoom, Google Meet, and Microsoft Teams screen shares.
+              </li>
+              <li>
+                <strong>⚖️ Participant Notification:</strong> Live audio transcription may be considered a recording under local laws or company policies. Ensure you have obtained appropriate consent from meeting participants.
+              </li>
+            </ul>
+
+            <div class="consent-actions">
+              <button
+                type="button"
+                class="btn-consent"
+                (click)="confirmConsent()"
+              >
+                I Understand & Agree
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Draggable Header -->
+      <header class="overlay-header">
+        <div class="header-left">
+          <span
+            class="status-indicator"
+            [class.listening]="isListening()"
+            [title]="isListening() ? 'Actively listening to meeting audio' : 'Audio session paused'"
+          ></span>
+          <div class="title-meta">
+            <span class="app-title">QuestionLens</span>
+            <span class="session-timer">{{ sessionTimeFormatted() }}</span>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <!-- Answer Mode Selector -->
+          <button
+            type="button"
+            class="chip mode-chip"
+            (click)="cycleAnswerMode()"
+            [title]="'Current Mode: ' + selectedMode() + ' (click to cycle)'"
+          >
+            {{ selectedMode() }}
+          </button>
+
+          <!-- Settings Button -->
+          <button
+            type="button"
+            class="chip"
+            (click)="openSettings()"
+            title="Open Preferences & Context Profile"
+          >
+            ⚙
+          </button>
+
+          <!-- Click-through indicator / toggle -->
+          <button
+            type="button"
+            class="chip click-thru-chip"
+            [class.active]="clickThroughActive()"
+            (click)="toggleClickThrough()"
+            [title]="clickThroughActive() ? 'Click-through ON (⌘⇧M to toggle)' : 'Enable Click-through'"
+          >
+            @if (clickThroughActive()) {
+              ⚡ Click-Thru
+            } @else {
+              Clickable
+            }
+          </button>
+        </div>
+      </header>
+
+      <!-- View Navigation & Action Toolbar -->
+      <div class="action-bar">
+        <div class="view-tabs">
+          <button
+            type="button"
+            class="tab-btn"
+            [class.active]="currentTab() === 'questions'"
+            (click)="currentTab.set('questions')"
+          >
+            Questions ({{ questions().length }})
+          </button>
+          <button
+            type="button"
+            class="tab-btn transcript-tab"
+            [class.active]="currentTab() === 'transcript'"
+            (click)="currentTab.set('transcript')"
+          >
+            <span
+              class="audio-dot"
+              [style.opacity]="0.4 + audioLevel() * 0.6"
+              [class.active]="audioLevel() > 0.05"
+            ></span>
+            Live Transcript
+          </button>
+          <button
+            type="button"
+            class="tab-btn summary-tab"
+            [class.active]="currentTab() === 'summary'"
+            (click)="loadOrGenerateSummary()"
+          >
+            📋 Summary
+          </button>
+        </div>
+
+        <div class="action-group">
+          @if (currentTab() === 'questions') {
+            <button
+              type="button"
+              class="action-btn primary"
+              (click)="simulateNewQuestion()"
+              title="Simulate a new question arriving"
+            >
+              <span class="btn-icon">+</span> Question
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only"
+              (click)="toggleCollapseAll()"
+              [title]="allCollapsed() ? 'Expand all' : 'Collapse all'"
+            >
+              {{ allCollapsed() ? '⤢' : '⤡' }}
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only danger"
+              (click)="clearUnpinnedQuestions()"
+              title="Clear unpinned (⌘⇧C)"
+            >
+              🗑
+            </button>
+          } @else if (currentTab() === 'transcript') {
+            <button
+              type="button"
+              class="action-btn"
+              [class.primary]="!isListening()"
+              (click)="toggleSessionListening()"
+              [title]="isListening() ? 'Pause live audio session' : 'Resume live audio session'"
+            >
+              {{ isListening() ? '⏸ Pause' : '▶ Start' }}
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only danger"
+              (click)="clearTranscript()"
+              title="Clear transcript"
+            >
+              🗑
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="action-btn primary"
+              (click)="exportMeetingSummary()"
+              [disabled]="isExportingSummary() || !meetingSummary()"
+              title="Save summary as Markdown file"
+            >
+              📥 Export
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only"
+              (click)="copySummaryMarkdown()"
+              [disabled]="!meetingSummary()"
+              title="Copy markdown to clipboard"
+            >
+              📋
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only"
+              (click)="generateMeetingSummary()"
+              [disabled]="isGeneratingSummary()"
+              title="Refresh / regenerate summary"
+            >
+              🔄
+            </button>
+          }
+        </div>
+      </div>
+
+      <!-- Toast Notification -->
+      @if (toastMessage()) {
+        <div class="toast-banner">
+          {{ toastMessage() }}
+        </div>
+      }
+
+      <!-- Main Content Area -->
+      @if (currentTab() === 'questions') {
+        <!-- Questions Feed -->
+        <main class="question-list">
+          @if (questions().length === 0) {
+            <div class="empty-state">
+              <div class="empty-icon">💬</div>
+              <div class="empty-title">Waiting for questions...</div>
+              <div class="empty-subtitle">
+                Detected meeting questions and talking points appear here automatically.
+              </div>
+              <button
+                type="button"
+                class="empty-btn"
+                (click)="simulateNewQuestion()"
+              >
+                Simulate Question
+              </button>
+            </div>
+          } @else {
+            @for (q of sortedQuestions(); track q.id) {
+              <article
+                class="question-card"
+                [class.pinned]="q.status === 'pinned'"
+                [class.answering]="q.status === 'answering'"
+                [class.collapsed]="isCollapsed(q.id)"
+              >
+                <!-- Card Header -->
+                <div class="card-header" (click)="toggleCollapse(q.id)">
+                  <div class="card-meta">
+                    <span
+                      class="status-badge"
+                      [class]="'badge-' + q.status"
+                    >
+                      {{ q.status }}
+                    </span>
+                    @if (q.speaker) {
+                      <span class="speaker-pill">🎙️ {{ q.speaker }}</span>
+                    }
+                    <span class="time-stamp">{{ formatRelativeTime(q.askedAt) }}</span>
+                  </div>
+
+                  <div class="card-controls" (click)="$event.stopPropagation()">
+                    <button
+                      type="button"
+                      class="card-action-btn"
+                      [class.active]="q.status === 'pinned'"
+                      (click)="togglePin(q.id)"
+                      [title]="q.status === 'pinned' ? 'Unpin question' : 'Pin question (⌘⇧P)'"
+                    >
+                      📌
+                    </button>
+                    <button
+                      type="button"
+                      class="card-action-btn"
+                      (click)="regenerateAnswer(q)"
+                      title="Regenerate talking points (⌘⇧R)"
+                    >
+                      🔄
+                    </button>
+                    <button
+                      type="button"
+                      class="card-action-btn"
+                      (click)="copyAnswer(q)"
+                      title="Copy talking points (⌘⇧Y)"
+                    >
+                      📋
+                    </button>
+                    <button
+                      type="button"
+                      class="card-action-btn close"
+                      (click)="dismissQuestion(q.id)"
+                      title="Dismiss question"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Question Text -->
+                <h2 class="question-text" (click)="toggleCollapse(q.id)">
+                  {{ q.text }}
+                </h2>
+
+                <!-- Expanded Answer Talking Points -->
+                @if (!isCollapsed(q.id) && q.answer) {
+                  <div class="answer-section">
+                    <div class="bullets-header">
+                      <span class="talking-points-label">Talking Points</span>
+                      <span class="mode-tag">{{ q.answer.mode }}</span>
+                    </div>
+
+                    <ul class="bullets-list">
+                      @for (bullet of q.answer.bullets; track $index) {
+                        <li class="bullet-item">
+                          <span class="bullet-dot">•</span>
+                          <span class="bullet-content">{{ bullet }}</span>
+                        </li>
+                      }
+                      @if (q.status === 'answering') {
+                        <li class="bullet-item streaming-bullet">
+                          <span class="bullet-dot animate-pulse">•</span>
+                          <span class="bullet-content italic-muted">Generating talking points...</span>
+                        </li>
+                      }
+                    </ul>
+
+                    @if (q.answer.code) {
+                      <div class="code-block">
+                        <div class="code-header">Example snippet</div>
+                        <pre><code>{{ q.answer.code }}</code></pre>
+                      </div>
+                    }
+                  </div>
+                }
+              </article>
+            }
+          }
+        </main>
+      } @else if (currentTab() === 'transcript') {
+        <!-- Milestone 2: Live Transcript Debug View -->
+        <main class="transcript-view" #transcriptContainer>
+          <!-- Audio Activity Bar -->
+          <div class="audio-meter-panel">
+            <div class="meter-info">
+              <span class="meter-label">Audio Stream</span>
+              <span class="provider-pill">{{ sttProvider() }}</span>
+            </div>
+            <div class="meter-track">
+              <div
+                class="meter-level"
+                [style.width.%]="audioLevel() * 100"
+              ></div>
+            </div>
+          </div>
+
+          <!-- Streaming Transcript Feed -->
+          <div class="transcript-scroll">
+            @if (transcriptSegments().length === 0 && !activeInterim()) {
+              <div class="empty-state">
+                <div class="empty-icon">🎙️</div>
+                <div class="empty-title">Waiting for meeting speech...</div>
+                <div class="empty-subtitle">
+                  Loopback audio from the capture window streams here in real-time.
+                </div>
+              </div>
+            } @else {
+              <div class="segments-list">
+                @for (seg of transcriptSegments(); track seg.id) {
+                  <div class="transcript-segment final">
+                    <span class="seg-time">[{{ formatSegmentTime(seg.startMs) }}]</span>
+                    @if (seg.speaker) {
+                      <span class="seg-speaker">{{ seg.speaker }}:</span>
+                    }
+                    <span class="seg-text">{{ seg.text }}</span>
+                  </div>
+                }
+
+                <!-- Active Interim / Live Typing Token Stream -->
+                @if (activeInterim()) {
+                  <div class="transcript-segment interim">
+                    <span class="seg-badge-live">Live</span>
+                    @if (activeInterim()!.speaker) {
+                      <span class="seg-speaker">{{ activeInterim()!.speaker }}:</span>
+                    }
+                    <span class="seg-text-interim">{{ activeInterim()!.text }}</span>
+                    <span class="typing-cursor">▎</span>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        </main>
+      } @else {
+        <!-- Milestone 7: Post-Meeting Summary & Action Items View -->
+        <main class="summary-view">
+          @if (isGeneratingSummary()) {
+            <div class="summary-loading">
+              <div class="loading-spinner"></div>
+              <div class="loading-text">Synthesizing executive summary & action items...</div>
+            </div>
+          } @else if (meetingSummary(); as sum) {
+            <div class="summary-content">
+              <div class="summary-hero">
+                <h2 class="summary-title">{{ sum.title }}</h2>
+                <span class="summary-date">Generated {{ formatRelativeTime(sum.generatedAt) }}</span>
+              </div>
+
+              <!-- Executive Overview -->
+              <section class="summary-section">
+                <h3 class="section-title">📌 Executive Overview</h3>
+                <p class="overview-text">{{ sum.overview }}</p>
+              </section>
+
+              <!-- Action Items -->
+              <section class="summary-section">
+                <h3 class="section-title">✅ Extracted Action Items ({{ sum.actionItems.length }})</h3>
+                <div class="action-items-list">
+                  @for (act of sum.actionItems; track act.id) {
+                    <div class="action-item-row">
+                      <input type="checkbox" class="action-checkbox" />
+                      <div class="action-task-content">
+                        <span class="task-desc">{{ act.task }}</span>
+                        @if (act.owner || act.dueDate) {
+                          <div class="task-tags">
+                            @if (act.owner) {
+                              <span class="owner-tag">👤 {{ act.owner }}</span>
+                            }
+                            @if (act.dueDate) {
+                              <span class="due-tag">📅 {{ act.dueDate }}</span>
+                            }
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              </section>
+
+              <!-- Key Questions Discussed -->
+              <section class="summary-section">
+                <h3 class="section-title">❓ Key Questions & Talking Points</h3>
+                <div class="key-questions-list">
+                  @for (kq of sum.keyQuestions; track $index) {
+                    <div class="key-q-card">
+                      <div class="key-q-header">
+                        @if (kq.speaker) {
+                          <span class="speaker-pill">🎙️ {{ kq.speaker }}</span>
+                        }
+                        <h4 class="key-q-title">{{ kq.question }}</h4>
+                      </div>
+                      <p class="key-q-summary">{{ kq.answerSummary }}</p>
+                    </div>
+                  }
+                </div>
+              </section>
+            </div>
+          } @else {
+            <div class="empty-state">
+              <div class="empty-icon">📝</div>
+              <div class="empty-title">No summary generated yet</div>
+              <div class="empty-subtitle">
+                Summarize transcript points and detected questions into a structured briefing with action items.
+              </div>
+              <button
+                type="button"
+                class="empty-btn"
+                (click)="generateMeetingSummary()"
+              >
+                Generate Meeting Summary
+              </button>
+            </div>
+          }
+        </main>
+      }
+
+      <!-- Footer Hotkey Hints -->
+      <footer class="overlay-footer">
+        @if (showHotkeys()) {
+          <div class="hotkeys-grid">
+            <span class="hotkey-item"><kbd>⌘⇧H</kbd> Hide</span>
+            <span class="hotkey-item"><kbd>⌘⇧M</kbd> Click-Thru</span>
+            <span class="hotkey-item"><kbd>⌘⇧C</kbd> Clear</span>
+            <span class="hotkey-item"><kbd>⌘⇧P</kbd> Pin</span>
+            <span class="hotkey-item"><kbd>⌘⇧Y</kbd> Copy</span>
+            <span class="hotkey-item"><kbd>⌘⇧R</kbd> Regen</span>
+          </div>
+        }
+        <div class="footer-bar">
+          <span class="footer-caption">
+            @if (currentTab() === 'questions') {
+              {{ questions().length }} questions
+            } @else if (currentTab() === 'transcript') {
+              {{ transcriptSegments().length }} transcript segments
+            } @else {
+              {{ meetingSummary()?.actionItems?.length || 0 }} action items
+            }
+          </span>
+          <button
+            type="button"
+            class="toggle-hotkeys-btn"
+            (click)="showHotkeys.set(!showHotkeys())"
+          >
+            {{ showHotkeys() ? 'Hide hints' : 'Show shortcuts' }}
+          </button>
+        </div>
+      </footer>
+
+      <!-- Bottom-Right Resize Grip Handle -->
+      <div
+        class="overlay-resize-handle"
+        (pointerdown)="onResizePointerDown($event)"
+        title="Drag corner to adjust overlay width and length"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M8 2L2 8M9 5L5 9M9 8L8 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
