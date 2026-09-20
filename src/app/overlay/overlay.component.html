@@ -68,6 +68,22 @@
               {{ selectedMode() }}
             </button>
 
+            <!-- Transcription Mode Switcher (Mode A: Other Only vs Mode B: Everyone) -->
+            <button
+              type="button"
+              class="chip transcription-mode-chip"
+              [class.everyone]="transcriptionMode() === 'everyone'"
+              (click)="toggleTranscriptionMode()"
+              (mouseenter)="showTooltip($event, transcriptionMode() === 'other-only' ? 'Transcription: Other Participant Only (Click for Everyone)' : 'Transcription: Everyone (Meeting + Mic) (Click for Other Only)')"
+              (mouseleave)="hideTooltip()"
+            >
+              @if (transcriptionMode() === 'other-only') {
+                🎧 Other Only
+              } @else {
+                👥 Everyone
+              }
+            </button>
+
             <!-- Workspace Persistence Toggle (All Workspaces vs Single Workspace) -->
             <button
               type="button"
@@ -239,6 +255,27 @@
         </div>
       }
 
+      <!-- Live Speech Ticker / Subtitle Preview (Shows what user is speaking in real time) -->
+      @if (latestSpeech(); as speech) {
+        <div
+          class="live-speech-ticker"
+          [class.is-live]="speech.isLive"
+          (click)="currentTab.set('transcript')"
+          title="Click to switch to full transcript view"
+        >
+          <div class="ticker-left">
+            <span class="ticker-dot" [class.pulsing]="speech.isLive">●</span>
+            <span
+              class="ticker-speaker"
+              [class.speaker-other]="speech.speaker === 'Other'"
+              [class.speaker-you]="speech.speaker === 'You'"
+            >{{ speech.speaker }}:</span>
+            <span class="ticker-text">{{ speech.text }}</span>
+          </div>
+          <span class="ticker-hint">Transcript ↗</span>
+        </div>
+      }
+
       <!-- Main Content Area -->
       @if (currentTab() === 'questions') {
         <!-- Questions Feed -->
@@ -392,10 +429,18 @@
             } @else {
               <div class="segments-list">
                 @for (seg of transcriptSegments(); track seg.id) {
-                  <div class="transcript-segment final">
+                  <div
+                    class="transcript-segment final"
+                    [class.speaker-other]="seg.speaker === 'Other'"
+                    [class.speaker-you]="seg.speaker === 'You'"
+                  >
                     <span class="seg-time">[{{ formatSegmentTime(seg.startMs) }}]</span>
                     @if (seg.speaker) {
-                      <span class="seg-speaker">{{ seg.speaker }}:</span>
+                      <span
+                        class="seg-speaker"
+                        [class.speaker-other]="seg.speaker === 'Other'"
+                        [class.speaker-you]="seg.speaker === 'You'"
+                      >{{ seg.speaker }}:</span>
                     }
                     <span class="seg-text">{{ seg.text }}</span>
                   </div>
@@ -403,10 +448,18 @@
 
                 <!-- Active Interim / Live Typing Token Stream -->
                 @if (activeInterim()) {
-                  <div class="transcript-segment interim">
+                  <div
+                    class="transcript-segment interim"
+                    [class.speaker-other]="activeInterim()!.speaker === 'Other'"
+                    [class.speaker-you]="activeInterim()!.speaker === 'You'"
+                  >
                     <span class="seg-badge-live">Live</span>
                     @if (activeInterim()!.speaker) {
-                      <span class="seg-speaker">{{ activeInterim()!.speaker }}:</span>
+                      <span
+                        class="seg-speaker"
+                        [class.speaker-other]="activeInterim()!.speaker === 'Other'"
+                        [class.speaker-you]="activeInterim()!.speaker === 'You'"
+                      >{{ activeInterim()!.speaker }}:</span>
                     }
                     <span class="seg-text-interim">{{ activeInterim()!.text }}</span>
                     <span class="typing-cursor">▎</span>
@@ -563,6 +616,22 @@
                 (mouseleave)="hideTooltip()"
               >
                 ⚡ {{ selectedMode() }}
+              </button>
+
+              <!-- Transcription Mode Switcher (Mode A: Other Only vs Mode B: Everyone) -->
+              <button
+                type="button"
+                class="v2-pill-btn transcription-pill"
+                [class.everyone]="transcriptionMode() === 'everyone'"
+                (click)="toggleTranscriptionMode()"
+                (mouseenter)="showTooltip($event, transcriptionMode() === 'other-only' ? 'Transcription: Other Participant Only (Click for Everyone)' : 'Transcription: Everyone (Meeting + Mic) (Click for Other Only)')"
+                (mouseleave)="hideTooltip()"
+              >
+                @if (transcriptionMode() === 'other-only') {
+                  🎧 Other Only
+                } @else {
+                  👥 Everyone
+                }
               </button>
 
               <!-- Workspace Persistence Toggle (All Workspaces vs Single Workspace) -->
@@ -729,6 +798,27 @@
           </div>
         </header>
 
+        <!-- Live Speech Ticker (V2 HUD) -->
+        @if (latestSpeech(); as speech) {
+          <div
+            class="v2-live-speech-ticker"
+            [class.is-live]="speech.isLive"
+            (click)="currentTab.set('transcript')"
+            title="Click to switch to full transcript view"
+          >
+            <div class="v2-ticker-left">
+              <span class="v2-ticker-dot" [class.pulsing]="speech.isLive">●</span>
+              <span
+                class="v2-ticker-speaker"
+                [class.speaker-other]="speech.speaker === 'Other'"
+                [class.speaker-you]="speech.speaker === 'You'"
+              >{{ speech.speaker }}:</span>
+              <span class="v2-ticker-text">{{ speech.text }}</span>
+            </div>
+            <span class="v2-ticker-action">Transcript ↗</span>
+          </div>
+        }
+
         <!-- Main V2 Content Area -->
         @if (currentTab() === 'questions') {
           <main class="v2-feed-container">
@@ -874,19 +964,35 @@
               } @else {
                 <div class="v2-segment-stream">
                   @for (seg of transcriptSegments(); track seg.id) {
-                    <div class="v2-stream-item final">
+                    <div
+                      class="v2-stream-item final"
+                      [class.speaker-other]="seg.speaker === 'Other'"
+                      [class.speaker-you]="seg.speaker === 'You'"
+                    >
                       <span class="v2-seg-time">{{ formatSegmentTime(seg.startMs) }}</span>
                       @if (seg.speaker) {
-                        <span class="v2-seg-speaker">{{ seg.speaker }}:</span>
+                        <span
+                          class="v2-seg-speaker"
+                          [class.speaker-other]="seg.speaker === 'Other'"
+                          [class.speaker-you]="seg.speaker === 'You'"
+                        >{{ seg.speaker }}:</span>
                       }
                       <span class="v2-seg-body">{{ seg.text }}</span>
                     </div>
                   }
                   @if (activeInterim()) {
-                    <div class="v2-stream-item live">
+                    <div
+                      class="v2-stream-item live"
+                      [class.speaker-other]="activeInterim()!.speaker === 'Other'"
+                      [class.speaker-you]="activeInterim()!.speaker === 'You'"
+                    >
                       <span class="v2-live-tag">LIVE</span>
                       @if (activeInterim()!.speaker) {
-                        <span class="v2-seg-speaker">{{ activeInterim()!.speaker }}:</span>
+                        <span
+                          class="v2-seg-speaker"
+                          [class.speaker-other]="activeInterim()!.speaker === 'Other'"
+                          [class.speaker-you]="activeInterim()!.speaker === 'You'"
+                        >{{ activeInterim()!.speaker }}:</span>
                       }
                       <span class="v2-interim-body">{{ activeInterim()!.text }}</span>
                       <span class="v2-cursor-caret">▋</span>

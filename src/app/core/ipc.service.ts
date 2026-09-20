@@ -10,6 +10,11 @@ import {
   AppDiagnostics,
   KnowledgeDoc,
   MeetingSummary,
+  TranscriptionMode,
+  AudioChunkPayload,
+  WhisperStatus,
+  WhisperDownloadProgress,
+  MacosPermissions,
 } from '@shared/ipc';
 
 @Injectable({
@@ -149,7 +154,7 @@ export class IpcService {
     return this.api.getSessionStatus();
   }
 
-  sendAudioChunk(chunk: ArrayBuffer): void {
+  sendAudioChunk(chunk: AudioChunkPayload): void {
     if (!this.api) return;
     this.api.sendAudioChunk(chunk);
   }
@@ -177,6 +182,65 @@ export class IpcService {
   onTranscriptClear(callback: () => void): (() => void) {
     if (!this.api) return () => {};
     return this.api.onTranscriptClear(callback);
+  }
+
+  // Transcription Mode (Mode A: Other Only vs Mode B: Everyone)
+  async getTranscriptionMode(): Promise<TranscriptionMode> {
+    if (!this.api) {
+      return (localStorage.getItem('ql_transcription_mode') as TranscriptionMode) || 'other-only';
+    }
+    return this.api.getTranscriptionMode();
+  }
+
+  async setTranscriptionMode(mode: TranscriptionMode): Promise<TranscriptionMode> {
+    if (!this.api) {
+      localStorage.setItem('ql_transcription_mode', mode);
+      return mode;
+    }
+    return this.api.setTranscriptionMode(mode);
+  }
+
+  onTranscriptionModeChanged(callback: (mode: TranscriptionMode) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onTranscriptionModeChanged(callback);
+  }
+
+  // Local Whisper STT Management
+  async getWhisperStatus(): Promise<WhisperStatus> {
+    if (!this.api) {
+      return {
+        available: true,
+        binaryPath: '/opt/homebrew/bin/whisper-cli',
+        gpuAcceleration: 'Apple Silicon Metal (GPU)',
+        installedModels: ['base.en'],
+        currentModel: 'base.en',
+        isDownloading: false,
+      };
+    }
+    return this.api.getWhisperStatus();
+  }
+
+  async downloadWhisperModel(modelName: string): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.downloadWhisperModel(modelName);
+  }
+
+  onWhisperDownloadProgress(callback: (progress: WhisperDownloadProgress) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onWhisperDownloadProgress(callback);
+  }
+
+  // macOS Permissions
+  async getMacosPermissions(): Promise<MacosPermissions> {
+    if (!this.api) {
+      return { microphone: 'granted', screen: 'granted' };
+    }
+    return this.api.getMacosPermissions();
+  }
+
+  async requestMacosMicrophonePermission(): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.requestMacosMicrophonePermission();
   }
 
   // Question & Answer channels (Milestone 3)
@@ -238,6 +302,11 @@ export class IpcService {
       }
     }
     return this.api.openSettings();
+  }
+
+  onSettingsChanged(callback: (settings: AppSettings) => void): (() => void) | undefined {
+    if (!this.api) return undefined;
+    return this.api.onSettingsChanged(callback);
   }
 
   onSettingsVisibilityChanged(callback: (isOpen: boolean) => void): (() => void) | undefined {

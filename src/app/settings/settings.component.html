@@ -54,6 +54,14 @@
       <button
         type="button"
         class="tab-link"
+        [class.active]="activeTab() === 'audio'"
+        (click)="switchTab('audio')"
+      >
+        🎙️ Audio & Transcription
+      </button>
+      <button
+        type="button"
+        class="tab-link"
         [class.active]="activeTab() === 'ai'"
         (click)="activeTab.set('ai')"
       >
@@ -226,6 +234,516 @@
       </section>
     }
 
+    <!-- Tab: Audio & Transcription (Modes A & B, Local Whisper, VAD, macOS Setup) -->
+    @if (activeTab() === 'audio') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Audio & Real-Time Transcription</h2>
+          <p>
+            Configure local real-time speech-to-text, dual transcription modes, Voice Activity Detection, and macOS audio routing.
+          </p>
+        </div>
+
+        <!-- 1. Two Transcription Modes (Mode A: Other Only vs Mode B: Everyone) -->
+        <div class="form-group">
+          <label class="form-label">Transcription Mode</label>
+          <div class="mode-cards-grid">
+            <div
+              class="mode-selection-card"
+              [class.active]="transcriptionMode() === 'other-only'"
+              (click)="selectTranscriptionMode('other-only')"
+            >
+              <div class="mode-card-header">
+                <span class="mode-icon">🎧</span>
+                <div class="mode-title-wrap">
+                  <h4 class="mode-title">Other Participant Only</h4>
+                  <span class="mode-tag recommended">Mode A • Recommended</span>
+                </div>
+                @if (transcriptionMode() === 'other-only') {
+                  <span class="active-badge">Active</span>
+                }
+              </div>
+              <p class="mode-desc">
+                Transcribes <strong>only remote meeting participants</strong> from meeting audio. Your microphone is completely muted from transcription, ideal for interviews and client calls.
+              </p>
+              <div class="mode-features">
+                <span>✓ Zero mic transcription</span>
+                <span>✓ Labeled as "Other"</span>
+                <span>✓ VAD silence gating</span>
+              </div>
+            </div>
+
+            <div
+              class="mode-selection-card"
+              [class.active]="transcriptionMode() === 'everyone'"
+              (click)="selectTranscriptionMode('everyone')"
+            >
+              <div class="mode-card-header">
+                <span class="mode-icon">👥</span>
+                <div class="mode-title-wrap">
+                  <h4 class="mode-title">Everyone</h4>
+                  <span class="mode-tag">Mode B • Full Meeting</span>
+                </div>
+                @if (transcriptionMode() === 'everyone') {
+                  <span class="active-badge">Active</span>
+                }
+              </div>
+              <p class="mode-desc">
+                Transcribes both <strong>your microphone ("You")</strong> and <strong>remote participants ("Other")</strong> with separated audio pipelines.
+              </p>
+              <div class="mode-features">
+                <span>✓ Dual-stream capture</span>
+                <span>✓ Distinct speaker tags</span>
+                <span>✓ Independent VAD</span>
+              </div>
+            </div>
+          </div>
+          <span class="field-hint">
+            You can also switch modes on the fly during a meeting directly from the floating overlay header.
+          </span>
+        </div>
+
+        <!-- 2. STT Provider Selection -->
+        <div class="form-group">
+          <label for="audio-stt-provider" class="form-label">Speech-to-Text Engine</label>
+          <select
+            id="audio-stt-provider"
+            class="form-select"
+            [value]="sttProvider()"
+            (change)="onSttProviderChange($event)"
+          >
+            <option value="local-whisper">Local Whisper (Free, Apple Silicon Metal GPU, 100% Private)</option>
+            <option value="deepgram">Deepgram WebSocket Streaming (Cloud API)</option>
+            <option value="simulation">Meeting Dialogue Simulation (Offline / Testing)</option>
+          </select>
+          <span class="field-hint">
+            Local Whisper runs inference on your Mac using Apple Silicon Metal acceleration with zero external API calls.
+          </span>
+        </div>
+
+        <!-- 3. Local Whisper Engine & Model Management -->
+        @if (sttProvider() === 'local-whisper') {
+          <div class="whisper-panel">
+            <div class="whisper-status-bar">
+              <div class="status-indicator-box">
+                <span class="status-dot" [class.ready]="whisperStatus()?.available"></span>
+                <div>
+                  <strong>Engine Status: </strong>
+                  @if (whisperStatus()?.available) {
+                    <span class="status-text ready">whisper-cli detected & active</span>
+                    <span class="status-detail">({{ whisperStatus()?.gpuAcceleration || 'CPU' }})</span>
+                  } @else {
+                    <span class="status-text missing">whisper-cli not found</span>
+                  }
+                </div>
+              </div>
+              <div class="binary-path-hint" title="{{ whisperStatus()?.binaryPath || 'Not found' }}">
+                <code>{{ whisperStatus()?.binaryPath || 'Install via brew install whisper-cpp' }}</code>
+              </div>
+            </div>
+
+            <!-- Model Selection & Download Cards -->
+            <label class="form-label" style="margin-top: 14px;">Whisper GGML Models</label>
+            <div class="model-cards-grid">
+              <!-- base.en -->
+              <div class="model-box" [class.selected]="whisperModel() === 'base.en'">
+                <div class="model-info">
+                  <div class="model-title-line">
+                    <span class="model-name">ggml-base.en.bin</span>
+                    <span class="model-badge">~142 MB</span>
+                  </div>
+                  <p class="model-summary">Recommended. High transcription accuracy with fast real-time latency.</p>
+                  <div class="model-installed-status">
+                    @if (whisperStatus()?.installedModels?.includes('base.en')) {
+                      <span class="installed-tag">✓ Ready to use</span>
+                    } @else {
+                      <span class="missing-tag">Not installed</span>
+                    }
+                  </div>
+                </div>
+                <div class="model-actions">
+                  @if (whisperStatus()?.installedModels?.includes('base.en')) {
+                    <button
+                      type="button"
+                      class="btn-secondary btn-sm"
+                      [class.btn-active-model]="whisperModel() === 'base.en'"
+                      (click)="whisperModel.set('base.en')"
+                    >
+                      {{ whisperModel() === 'base.en' ? 'Active Model' : 'Select Model' }}
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="btn-primary btn-sm"
+                      [disabled]="isDownloadingWhisper()"
+                      (click)="downloadWhisperModel('base.en')"
+                    >
+                      Download (142MB)
+                    </button>
+                  }
+                </div>
+              </div>
+
+              <!-- tiny.en -->
+              <div class="model-box" [class.selected]="whisperModel() === 'tiny.en'">
+                <div class="model-info">
+                  <div class="model-title-line">
+                    <span class="model-name">ggml-tiny.en.bin</span>
+                    <span class="model-badge">~75 MB</span>
+                  </div>
+                  <p class="model-summary">Fastest inference and lowest memory footprint.</p>
+                  <div class="model-installed-status">
+                    @if (whisperStatus()?.installedModels?.includes('tiny.en')) {
+                      <span class="installed-tag">✓ Ready to use</span>
+                    } @else {
+                      <span class="missing-tag">Not installed</span>
+                    }
+                  </div>
+                </div>
+                <div class="model-actions">
+                  @if (whisperStatus()?.installedModels?.includes('tiny.en')) {
+                    <button
+                      type="button"
+                      class="btn-secondary btn-sm"
+                      [class.btn-active-model]="whisperModel() === 'tiny.en'"
+                      (click)="whisperModel.set('tiny.en')"
+                    >
+                      {{ whisperModel() === 'tiny.en' ? 'Active Model' : 'Select Model' }}
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="btn-primary btn-sm"
+                      [disabled]="isDownloadingWhisper()"
+                      (click)="downloadWhisperModel('tiny.en')"
+                    >
+                      Download (75MB)
+                    </button>
+                  }
+                </div>
+              </div>
+            </div>
+
+            <!-- Download Progress Bar -->
+            @if (isDownloadingWhisper() && whisperDownloadProgress(); as prog) {
+              <div class="download-progress-container">
+                <div class="progress-header">
+                  <span>Downloading ggml-{{ prog.model }}.bin...</span>
+                  <span>{{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" [style.width.%]="prog.percent"></div>
+                </div>
+              </div>
+            }
+          </div>
+        }
+
+        <!-- 4. Voice Frequency Equalizer & Noise Isolation -->
+        <div class="form-group" style="margin-top: 24px;">
+          <div class="section-sub-header">
+            <div class="sub-header-left">
+              <span class="sub-header-icon">🎛️</span>
+              <div>
+                <h3 class="sub-header-title">Voice Frequency Equalizer & Noise Isolation</h3>
+                <p class="sub-header-desc">
+                  Isolates human vocal frequencies using dual-stage DSP filters (highpass & lowpass) to remove AC rumble, desk bumps, fan noise, and keyboard clicks before transcription.
+                </p>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                [checked]="voiceFilterEnabled()"
+                (change)="toggleVoiceFilter()"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Presets -->
+          <div class="equalizer-presets-wrap">
+            <span class="preset-label">Presets:</span>
+            <div class="preset-chips">
+              <button
+                type="button"
+                class="preset-chip"
+                [class.active]="voiceFilterPreset() === 'optimal-voice'"
+                (click)="setVoiceFilterPreset('optimal-voice')"
+              >
+                🗣️ Optimal Voice (120Hz – 4kHz)
+              </button>
+              <button
+                type="button"
+                class="preset-chip"
+                [class.active]="voiceFilterPreset() === 'aggressive-noise-cut'"
+                (click)="setVoiceFilterPreset('aggressive-noise-cut')"
+              >
+                🔇 Aggressive Noise Cut (200Hz – 3.2kHz)
+              </button>
+              <button
+                type="button"
+                class="preset-chip"
+                [class.active]="voiceFilterPreset() === 'wide-natural'"
+                (click)="setVoiceFilterPreset('wide-natural')"
+              >
+                🎙️ Wide / Natural (80Hz – 7.5kHz)
+              </button>
+              <button
+                type="button"
+                class="preset-chip custom-pill"
+                [class.active]="voiceFilterPreset() === 'custom'"
+                (click)="setVoiceFilterPreset('custom')"
+              >
+                ⚙️ Custom
+              </button>
+            </div>
+          </div>
+
+          <!-- Dual Sliders & Spectrum Graph -->
+          <div class="equalizer-controls-card" [class.disabled-filter]="!voiceFilterEnabled()">
+            <div class="frequency-spectrum-bar">
+              <div class="spectrum-band cut-low" [style.width.%]="(voiceLowCutHz() / 8000) * 100">
+                <span>Rumble Cut (&lt;{{ voiceLowCutHz() }}Hz)</span>
+              </div>
+              <div class="spectrum-band passband" [style.width.%]="((voiceHighCutHz() - voiceLowCutHz()) / 8000) * 100">
+                <span class="passband-text">🎯 Human Voice Passband ({{ voiceLowCutHz() }} Hz – {{ voiceHighCutHz() }} Hz)</span>
+              </div>
+              <div class="spectrum-band cut-high" [style.width.%]="((8000 - voiceHighCutHz()) / 8000) * 100">
+                <span>Hiss Cut (&gt;{{ voiceHighCutHz() }}Hz)</span>
+              </div>
+            </div>
+
+            <div class="sliders-grid">
+              <!-- Low-Cut Slider -->
+              <div class="slider-box">
+                <div class="slider-header">
+                  <span class="slider-title">Low-Cut Filter (Highpass)</span>
+                  <span class="slider-value-badge">{{ voiceLowCutHz() }} Hz</span>
+                </div>
+                <input
+                  type="range"
+                  min="80"
+                  max="300"
+                  step="10"
+                  class="range-slider"
+                  [disabled]="!voiceFilterEnabled()"
+                  [value]="voiceLowCutHz()"
+                  (input)="onVoiceLowCutChange($event)"
+                />
+                <div class="slider-footer-hints">
+                  <span>80 Hz (Full warmth)</span>
+                  <span>Cuts HVAC, hum, desk bumps</span>
+                  <span>300 Hz (Tight cut)</span>
+                </div>
+              </div>
+
+              <!-- High-Cut Slider -->
+              <div class="slider-box">
+                <div class="slider-header">
+                  <span class="slider-title">High-Cut Filter (Lowpass)</span>
+                  <span class="slider-value-badge">{{ voiceHighCutHz() }} Hz</span>
+                </div>
+                <input
+                  type="range"
+                  min="3000"
+                  max="8000"
+                  step="100"
+                  class="range-slider"
+                  [disabled]="!voiceFilterEnabled()"
+                  [value]="voiceHighCutHz()"
+                  (input)="onVoiceHighCutChange($event)"
+                />
+                <div class="slider-footer-hints">
+                  <span>3,000 Hz (Muffled cut)</span>
+                  <span>Cuts keyboard, hiss, clicks</span>
+                  <span>8,000 Hz (Crisp sibilance)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. VAD Silence Gate & Speech Enhancements -->
+        <div class="form-group" style="margin-top: 20px;">
+          <div class="section-sub-header">
+            <div class="sub-header-left">
+              <span class="sub-header-icon">⚡</span>
+              <div>
+                <h3 class="sub-header-title">Speech-to-Text Sensitivity & Preprocessing</h3>
+                <p class="sub-header-desc">
+                  Adjust silence gate threshold and hardware-assisted acoustic preprocessing to optimize transcription accuracy.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- VAD Sensitivity Slider -->
+          <div class="vad-control-box">
+            <div class="slider-header">
+              <div class="vad-title-wrap">
+                <strong>VAD Silence Gate Threshold: </strong>
+                <span class="field-hint-inline">Audio below this RMS volume is dropped before Whisper</span>
+              </div>
+              <span class="slider-value-badge vad-badge">{{ vadSensitivity() }} RMS</span>
+            </div>
+            <input
+              type="range"
+              min="0.002"
+              max="0.025"
+              step="0.001"
+              class="range-slider"
+              [value]="vadSensitivity()"
+              (input)="onVadSensitivityChange($event)"
+            />
+            <div class="slider-footer-hints">
+              <span>0.002 (Very Sensitive / Quiet whispers)</span>
+              <span>Default: 0.006</span>
+              <span>0.025 (Resistant / Loud voices only)</span>
+            </div>
+          </div>
+
+          <!-- Feature Toggles Grid -->
+          <div class="enhancement-toggles-grid" style="margin-top: 14px;">
+            <div class="toggle-card" (click)="toggleNoiseSuppression()">
+              <div class="toggle-card-info">
+                <span class="toggle-card-title">WebRTC Noise Suppression</span>
+                <span class="toggle-card-desc">Removes steady background noise (fans, air conditioning)</span>
+              </div>
+              <label class="toggle-switch" (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [checked]="noiseSuppression()"
+                  (change)="toggleNoiseSuppression()"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-card" (click)="toggleEchoCancellation()">
+              <div class="toggle-card-info">
+                <span class="toggle-card-title">Acoustic Echo Cancellation</span>
+                <span class="toggle-card-desc">Suppresses speaker audio from feeding back into microphone</span>
+              </div>
+              <label class="toggle-switch" (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [checked]="echoCancellation()"
+                  (change)="toggleEchoCancellation()"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-card" (click)="toggleAutoGainControl()">
+              <div class="toggle-card-info">
+                <span class="toggle-card-title">Automatic Gain Control (AGC)</span>
+                <span class="toggle-card-desc">Normalizes quiet and loud speakers to an optimal transcription level</span>
+              </div>
+              <label class="toggle-switch" (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [checked]="autoGainControl()"
+                  (change)="toggleAutoGainControl()"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-card" (click)="toggleWhisperPromptPriming()">
+              <div class="toggle-card-info">
+                <span class="toggle-card-title">Whisper Context Priming</span>
+                <span class="toggle-card-desc">Injects technical meeting vocabulary prompt into Whisper to prevent hallucinations</span>
+              </div>
+              <label class="toggle-switch" (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [checked]="whisperPromptPriming()"
+                  (change)="toggleWhisperPromptPriming()"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. macOS Permissions & Device Selection -->
+        <div class="form-group" style="margin-top: 24px;">
+          <label class="form-label">macOS Permissions & Audio Devices</label>
+          <div class="macos-permissions-box">
+            <div class="perm-row">
+              <div class="perm-label">
+                <span class="perm-icon">🎤</span>
+                <div>
+                  <strong>Microphone Access: </strong>
+                  <span
+                    class="perm-badge"
+                    [class.granted]="macosPermissions()?.microphone === 'granted'"
+                    [class.denied]="macosPermissions()?.microphone !== 'granted'"
+                  >
+                    {{ macosPermissions()?.microphone === 'granted' ? 'Authorized' : 'Permission Required' }}
+                  </span>
+                </div>
+              </div>
+              @if (macosPermissions()?.microphone !== 'granted') {
+                <button type="button" class="btn-primary btn-sm" (click)="requestMicrophoneAccess()">
+                  Request Access
+                </button>
+              }
+            </div>
+          </div>
+
+          <div class="device-selectors-grid" style="margin-top: 14px;">
+            <div class="device-select-col">
+              <label for="meeting-device" class="form-label">Meeting Audio Source (Remote Voices)</label>
+              <select
+                id="meeting-device"
+                class="form-select"
+                [value]="meetingAudioDeviceId()"
+                (change)="onMeetingDeviceChange($event)"
+              >
+                <option value="">Default Loopback / System Audio</option>
+                @for (dev of audioInputDevices(); track dev.deviceId) {
+                  <option [value]="dev.deviceId">{{ dev.label }}</option>
+                }
+              </select>
+            </div>
+
+            <div class="device-select-col">
+              <label for="mic-device" class="form-label">Microphone Source (Your Voice)</label>
+              <select
+                id="mic-device"
+                class="form-select"
+                [value]="micAudioDeviceId()"
+                (change)="onMicDeviceChange($event)"
+              >
+                <option value="">Default Microphone</option>
+                @for (dev of audioInputDevices(); track dev.deviceId) {
+                  <option [value]="dev.deviceId">{{ dev.label }}</option>
+                }
+              </select>
+            </div>
+          </div>
+
+          <!-- macOS Setup Guide Callout -->
+          <div class="macos-setup-guide">
+            <div class="guide-title">💡 How to route Google Meet / Zoom audio on macOS:</div>
+            <ol class="guide-steps">
+              <li>
+                <strong>Option 1 (Virtual Audio Loopback):</strong> Install the free open-source
+                <code>BlackHole 2ch</code> (or create a Multi-Output Device in macOS <em>Audio MIDI Setup</em>).
+                In your meeting app (Google Meet, Zoom, Teams), set the speaker output to BlackHole.
+                QuestionLens will capture it as <strong>Meeting Audio</strong>!
+              </li>
+              <li>
+                <strong>Option 2 (Default Input):</strong> If your meeting audio plays through your speakers/headset, QuestionLens captures audio via your selected input device.
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
+    }
+
     <!-- Tab 2: AI & Models (FR-61) -->
     @if (activeTab() === 'ai') {
       <section class="section-panel">
@@ -243,6 +761,7 @@
             [value]="sttProvider()"
             (change)="onSttProviderChange($event)"
           >
+            <option value="local-whisper">Local Whisper (Free, Apple Silicon Metal GPU, 100% Private)</option>
             <option value="simulation">Meeting Dialogue Simulation (Offline / Dev)</option>
             <option value="deepgram">Deepgram WebSocket Streaming (Live Loopback Audio)</option>
           </select>

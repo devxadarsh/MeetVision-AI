@@ -2,12 +2,22 @@ import {
   ChangeDetectionStrategy,
   Component,
   OnInit,
+  OnDestroy,
   inject,
   signal,
   computed,
 } from '@angular/core';
 import { IpcService } from '../core/ipc.service';
-import { AppSettings, ContextProfile, AppDiagnostics, KnowledgeDoc } from '@shared/ipc';
+import {
+  AppSettings,
+  ContextProfile,
+  AppDiagnostics,
+  KnowledgeDoc,
+  TranscriptionMode,
+  WhisperStatus,
+  WhisperDownloadProgress,
+  MacosPermissions,
+} from '@shared/ipc';
 
 @Component({
   selector: 'app-settings',
@@ -16,11 +26,13 @@ import { AppSettings, ContextProfile, AppDiagnostics, KnowledgeDoc } from '@shar
   styleUrl: './settings.component.scss',
   templateUrl: './settings.component.html',
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, OnDestroy {
   private readonly ipcService = inject(IpcService);
 
   // Tabs
-  readonly activeTab = signal<'profile' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'>('profile');
+  readonly activeTab = signal<
+    'profile' | 'audio' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'
+  >('profile');
 
   // Diagnostics Signal (Milestone 5)
   readonly diagnostics = signal<AppDiagnostics | null>(null);
@@ -51,9 +63,35 @@ export class SettingsComponent implements OnInit {
   readonly glossary = signal<string[]>([]);
   readonly newGlossaryTerm = signal('');
 
-  // AI Signals (FR-61 & FR-23)
-  readonly sttProvider = signal<'deepgram' | 'simulation'>('simulation');
+  // Audio & Transcription Modes (Mode A: Other Only vs Mode B: Everyone)
+  readonly transcriptionMode = signal<TranscriptionMode>('other-only');
+  readonly sttProvider = signal<'deepgram' | 'simulation' | 'local-whisper'>('local-whisper');
   readonly sttLanguage = signal<'en' | 'hi' | 'multi'>('en');
+  readonly whisperModel = signal<string>('base.en');
+  readonly meetingAudioDeviceId = signal<string>('');
+  readonly micAudioDeviceId = signal<string>('');
+  readonly audioInputDevices = signal<{ deviceId: string; label: string }[]>([]);
+
+  // Local Whisper Status & Model Manager
+  readonly whisperStatus = signal<WhisperStatus | null>(null);
+  readonly whisperDownloadProgress = signal<WhisperDownloadProgress | null>(null);
+  readonly isDownloadingWhisper = signal(false);
+
+  // macOS Permissions
+  readonly macosPermissions = signal<MacosPermissions | null>(null);
+
+  // Voice Frequency Filter & Speech-to-Text Enhancements
+  readonly voiceFilterEnabled = signal<boolean>(true);
+  readonly voiceLowCutHz = signal<number>(120);
+  readonly voiceHighCutHz = signal<number>(4000);
+  readonly voiceFilterPreset = signal<'optimal-voice' | 'aggressive-noise-cut' | 'wide-natural' | 'custom'>('optimal-voice');
+  readonly vadSensitivity = signal<number>(0.006);
+  readonly noiseSuppression = signal<boolean>(true);
+  readonly echoCancellation = signal<boolean>(true);
+  readonly autoGainControl = signal<boolean>(true);
+  readonly whisperPromptPriming = signal<boolean>(true);
+
+  // LLM Signals
   readonly llmProvider = signal<'anthropic' | 'local'>('local');
   readonly llmModel = signal('claude-3-5-sonnet-20241022');
   readonly temperature = signal(0.3);
@@ -80,8 +118,40 @@ export class SettingsComponent implements OnInit {
   readonly toastMessage = signal<string | null>(null);
   readonly toastType = signal<'success' | 'info'>('success');
 
+  private unsubscribeDownloadProgress?: () => void;
+  private unsubscribeModeChanged?: () => void;
+
   async ngOnInit(): Promise<void> {
     await this.loadSettings();
+    await this.refreshWhisperStatus();
+    await this.refreshMacosPermissions();
+    await this.enumerateAudioDevices();
+
+    this.unsubscribeDownloadProgress = this.ipcService.onWhisperDownloadProgress((progress) => {
+      this.whisperDownloadProgress.set(progress);
+      if (progress.completed || progress.error) {
+        this.isDownloadingWhisper.set(false);
+        this.refreshWhisperStatus();
+        if (progress.completed) {
+          this.showToast(`Whisper model ${progress.model} downloaded successfully!`, 'success');
+        } else if (progress.error) {
+          this.showToast(`Model download error: ${progress.error}`, 'info');
+        }
+      }
+    });
+
+    this.unsubscribeModeChanged = this.ipcService.onTranscriptionModeChanged((mode) => {
+      this.transcriptionMode.set(mode);
+    });
+  }
+
+  ngOnDestroy(): void {
+    if (this.unsubscribeDownloadProgress) {
+      this.unsubscribeDownloadProgress();
+    }
+    if (this.unsubscribeModeChanged) {
+      this.unsubscribeModeChanged();
+    }
   }
 
   private async loadSettings(): Promise<void> {
@@ -95,9 +165,26 @@ export class SettingsComponent implements OnInit {
       this.glossary.set(settings.profile.glossary || []);
     }
 
-    // AI Configuration
-    this.sttProvider.set(settings.sttProvider || 'simulation');
+    // Audio & STT Configuration
+    this.sttProvider.set(settings.sttProvider || 'local-whisper');
+    this.transcriptionMode.set(settings.transcriptionMode || 'everyone');
     this.sttLanguage.set(settings.sttLanguage || 'en');
+    this.whisperModel.set(settings.whisperModel || 'tiny.en');
+    this.meetingAudioDeviceId.set(settings.meetingAudioDeviceId || '');
+    this.micAudioDeviceId.set(settings.micAudioDeviceId || '');
+
+    // Voice Frequency Filter & Tuning
+    if (typeof settings.voiceFilterEnabled === 'boolean') this.voiceFilterEnabled.set(settings.voiceFilterEnabled);
+    if (typeof settings.voiceLowCutHz === 'number') this.voiceLowCutHz.set(settings.voiceLowCutHz);
+    if (typeof settings.voiceHighCutHz === 'number') this.voiceHighCutHz.set(settings.voiceHighCutHz);
+    if (settings.voiceFilterPreset) this.voiceFilterPreset.set(settings.voiceFilterPreset);
+    if (typeof settings.vadSensitivity === 'number') this.vadSensitivity.set(settings.vadSensitivity);
+    if (typeof settings.noiseSuppression === 'boolean') this.noiseSuppression.set(settings.noiseSuppression);
+    if (typeof settings.echoCancellation === 'boolean') this.echoCancellation.set(settings.echoCancellation);
+    if (typeof settings.autoGainControl === 'boolean') this.autoGainControl.set(settings.autoGainControl);
+    if (typeof settings.whisperPromptPriming === 'boolean') this.whisperPromptPriming.set(settings.whisperPromptPriming);
+
+    // LLM Configuration
     this.llmProvider.set(settings.llmProvider || 'local');
     this.llmModel.set(settings.llmModel || 'claude-3-5-sonnet-20241022');
     this.temperature.set(typeof settings.temperature === 'number' ? settings.temperature : 0.3);
@@ -116,6 +203,85 @@ export class SettingsComponent implements OnInit {
     if (typeof settings.multiWorkspace === 'boolean') this.multiWorkspace.set(settings.multiWorkspace);
 
     await this.loadKnowledgeDocs();
+  }
+
+  async refreshWhisperStatus(): Promise<void> {
+    try {
+      const status = await this.ipcService.getWhisperStatus();
+      this.whisperStatus.set(status);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to get Whisper status:', err);
+    }
+  }
+
+  async refreshMacosPermissions(): Promise<void> {
+    try {
+      const perms = await this.ipcService.getMacosPermissions();
+      this.macosPermissions.set(perms);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to get macOS permissions:', err);
+    }
+  }
+
+  async requestMicrophoneAccess(): Promise<void> {
+    const granted = await this.ipcService.requestMacosMicrophonePermission();
+    await this.refreshMacosPermissions();
+    if (granted) {
+      this.showToast('Microphone permission granted!', 'success');
+      await this.enumerateAudioDevices();
+    } else {
+      this.showToast('Microphone access denied. Please allow in macOS System Settings.', 'info');
+    }
+  }
+
+  async enumerateAudioDevices(): Promise<void> {
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices
+          .filter((d) => d.kind === 'audioinput')
+          .map((d, index) => ({
+            deviceId: d.deviceId,
+            label: d.label || `Audio Input Device ${index + 1}`,
+          }));
+        this.audioInputDevices.set(inputs);
+      } catch (err) {
+        console.warn('[SettingsComponent] Failed enumerating audio devices:', err);
+      }
+    }
+  }
+
+  async selectTranscriptionMode(mode: TranscriptionMode): Promise<void> {
+    this.transcriptionMode.set(mode);
+    await this.ipcService.setTranscriptionMode(mode);
+    this.showToast(
+      mode === 'other-only'
+        ? 'Transcription Mode: Other Participant Only (Mic Muted)'
+        : 'Transcription Mode: Everyone (Meeting Audio + Microphone)',
+      'success'
+    );
+  }
+
+  async downloadWhisperModel(modelName: string): Promise<void> {
+    if (this.isDownloadingWhisper()) return;
+
+    this.isDownloadingWhisper.set(true);
+    this.whisperDownloadProgress.set({
+      model: modelName,
+      percent: 0,
+      downloadedMb: 0,
+      totalMb: modelName.includes('base') ? 142 : 75,
+      completed: false,
+    });
+
+    try {
+      this.showToast(`Starting download of model: ggml-${modelName}.bin...`, 'info');
+      await this.ipcService.downloadWhisperModel(modelName);
+    } catch (err: unknown) {
+      this.isDownloadingWhisper.set(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      this.showToast(`Failed downloading model: ${msg}`, 'info');
+    }
   }
 
   async loadKnowledgeDocs(): Promise<void> {
@@ -187,12 +353,27 @@ export class SettingsComponent implements OnInit {
 
   onSttProviderChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
-    this.sttProvider.set(target.value as 'deepgram' | 'simulation');
+    this.sttProvider.set(target.value as 'deepgram' | 'simulation' | 'local-whisper');
   }
 
   onSttLanguageChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
     this.sttLanguage.set(target.value as 'en' | 'hi' | 'multi');
+  }
+
+  onWhisperModelChange(event: Event): void {
+    const target = event.target as HTMLSelectElement;
+    this.whisperModel.set(target.value);
+  }
+
+  onMeetingDeviceChange(event: Event): void {
+    const target = event.target as HTMLSelectElement;
+    this.meetingAudioDeviceId.set(target.value);
+  }
+
+  onMicDeviceChange(event: Event): void {
+    const target = event.target as HTMLSelectElement;
+    this.micAudioDeviceId.set(target.value);
   }
 
   onLlmProviderChange(event: Event): void {
@@ -228,13 +409,23 @@ export class SettingsComponent implements OnInit {
   onOverlayWidthChange(event: Event): void {
     const target = event.target as HTMLInputElement;
     const val = parseInt(target.value, 10);
-    if (!isNaN(val)) this.overlayWidth.set(val);
+    if (!isNaN(val)) {
+      this.overlayWidth.set(val);
+      if (this.ipcService.isElectron()) {
+        this.ipcService.setOverlaySize(val, this.overlayHeight());
+      }
+    }
   }
 
   onOverlayHeightChange(event: Event): void {
     const target = event.target as HTMLInputElement;
     const val = parseInt(target.value, 10);
-    if (!isNaN(val)) this.overlayHeight.set(val);
+    if (!isNaN(val)) {
+      this.overlayHeight.set(val);
+      if (this.ipcService.isElectron()) {
+        this.ipcService.setOverlaySize(this.overlayWidth(), val);
+      }
+    }
   }
 
   onOverlayOpacityChange(event: Event): void {
@@ -256,11 +447,17 @@ export class SettingsComponent implements OnInit {
   stepWidth(delta: number): void {
     const next = Math.max(300, Math.min(1200, this.overlayWidth() + delta));
     this.overlayWidth.set(next);
+    if (this.ipcService.isElectron()) {
+      this.ipcService.setOverlaySize(next, this.overlayHeight());
+    }
   }
 
   stepHeight(delta: number): void {
     const next = Math.max(400, Math.min(1100, this.overlayHeight() + delta));
     this.overlayHeight.set(next);
+    if (this.ipcService.isElectron()) {
+      this.ipcService.setOverlaySize(this.overlayWidth(), next);
+    }
   }
 
   async applyOverlaySize(w: number, h: number): Promise<void> {
@@ -272,6 +469,10 @@ export class SettingsComponent implements OnInit {
       await this.ipcService.setOverlaySize(clampedW, clampedH);
     }
     this.showToast(`Overlay dimensions set to ${clampedW} × ${clampedH}px`, 'success');
+  }
+
+  async applyPresetDimensions(width: number, height: number): Promise<void> {
+    return this.applyOverlaySize(width, height);
   }
 
   async selectOverlayVersion(version: 'v1' | 'v2'): Promise<void> {
@@ -292,7 +493,11 @@ export class SettingsComponent implements OnInit {
 
     const payload: AppSettings = {
       sttProvider: this.sttProvider(),
+      transcriptionMode: this.transcriptionMode(),
       sttLanguage: this.sttLanguage(),
+      whisperModel: this.whisperModel(),
+      meetingAudioDeviceId: this.meetingAudioDeviceId() || undefined,
+      micAudioDeviceId: this.micAudioDeviceId() || undefined,
       llmProvider: this.llmProvider(),
       llmModel: this.llmModel(),
       temperature: this.temperature(),
@@ -302,6 +507,15 @@ export class SettingsComponent implements OnInit {
       overlayOpacity: this.overlayOpacity(),
       overlayVersion: this.overlayVersion(),
       multiWorkspace: this.multiWorkspace(),
+      voiceFilterEnabled: this.voiceFilterEnabled(),
+      voiceLowCutHz: this.voiceLowCutHz(),
+      voiceHighCutHz: this.voiceHighCutHz(),
+      voiceFilterPreset: this.voiceFilterPreset(),
+      vadSensitivity: this.vadSensitivity(),
+      noiseSuppression: this.noiseSuppression(),
+      echoCancellation: this.echoCancellation(),
+      autoGainControl: this.autoGainControl(),
+      whisperPromptPriming: this.whisperPromptPriming(),
       profile: {
         role: this.role(),
         projectSummary: this.projectSummary(),
@@ -323,7 +537,7 @@ export class SettingsComponent implements OnInit {
       this.hasDeepgramKey.set(Boolean(updated.hasDeepgramKey));
       this.anthropicKeyInput.set('');
       this.deepgramKeyInput.set('');
-      this.showToast('Settings and Context Profile saved successfully!', 'success');
+      this.showToast('Settings, audio routing, and context profile saved successfully!', 'success');
     } catch {
       this.showToast('Failed to save settings.', 'info');
     } finally {
@@ -338,8 +552,19 @@ export class SettingsComponent implements OnInit {
       'Leading core payments and distributed ledger migration. Zero downtime, strict idempotency, resilient circuit breaker patterns.'
     );
     this.glossary.set(['idempotency', 'jitter', 'canary rollout', 'circuit breaker', 'ledger', 'p99 latency']);
-    this.sttProvider.set('simulation');
+    this.sttProvider.set('local-whisper');
+    this.transcriptionMode.set('everyone');
+    this.whisperModel.set('tiny.en');
     this.sttLanguage.set('en');
+    this.voiceFilterEnabled.set(true);
+    this.voiceLowCutHz.set(120);
+    this.voiceHighCutHz.set(4000);
+    this.voiceFilterPreset.set('optimal-voice');
+    this.vadSensitivity.set(0.006);
+    this.noiseSuppression.set(true);
+    this.echoCancellation.set(true);
+    this.autoGainControl.set(true);
+    this.whisperPromptPriming.set(true);
     this.llmProvider.set('local');
     this.llmModel.set('claude-3-5-sonnet-20241022');
     this.temperature.set(0.3);
@@ -350,6 +575,67 @@ export class SettingsComponent implements OnInit {
     this.multiWorkspace.set(true);
     this.applyOverlayOpacity(0.88);
     this.showToast('Defaults loaded. Click "Save Changes" to apply.', 'info');
+  }
+
+  setVoiceFilterPreset(preset: 'optimal-voice' | 'aggressive-noise-cut' | 'wide-natural' | 'custom'): void {
+    this.voiceFilterPreset.set(preset);
+    if (preset === 'optimal-voice') {
+      this.voiceLowCutHz.set(120);
+      this.voiceHighCutHz.set(4000);
+      this.vadSensitivity.set(0.006);
+    } else if (preset === 'aggressive-noise-cut') {
+      this.voiceLowCutHz.set(200);
+      this.voiceHighCutHz.set(3200);
+      this.vadSensitivity.set(0.012);
+    } else if (preset === 'wide-natural') {
+      this.voiceLowCutHz.set(80);
+      this.voiceHighCutHz.set(7500);
+      this.vadSensitivity.set(0.004);
+    }
+  }
+
+  onVoiceLowCutChange(event: Event): void {
+    const val = parseInt((event.target as HTMLInputElement).value, 10);
+    if (!isNaN(val)) {
+      this.voiceLowCutHz.set(val);
+      this.voiceFilterPreset.set('custom');
+    }
+  }
+
+  onVoiceHighCutChange(event: Event): void {
+    const val = parseInt((event.target as HTMLInputElement).value, 10);
+    if (!isNaN(val)) {
+      this.voiceHighCutHz.set(val);
+      this.voiceFilterPreset.set('custom');
+    }
+  }
+
+  onVadSensitivityChange(event: Event): void {
+    const val = parseFloat((event.target as HTMLInputElement).value);
+    if (!isNaN(val)) {
+      this.vadSensitivity.set(val);
+      this.voiceFilterPreset.set('custom');
+    }
+  }
+
+  toggleVoiceFilter(): void {
+    this.voiceFilterEnabled.update((v) => !v);
+  }
+
+  toggleNoiseSuppression(): void {
+    this.noiseSuppression.update((v) => !v);
+  }
+
+  toggleEchoCancellation(): void {
+    this.echoCancellation.update((v) => !v);
+  }
+
+  toggleAutoGainControl(): void {
+    this.autoGainControl.update((v) => !v);
+  }
+
+  toggleWhisperPromptPriming(): void {
+    this.whisperPromptPriming.update((v) => !v);
   }
 
   async purgeAllData(): Promise<void> {
@@ -365,24 +651,28 @@ export class SettingsComponent implements OnInit {
     try {
       await this.ipcService.clearAllData();
       await this.loadSettings();
-      this.showToast('All local application data and credentials have been purged.', 'success');
+      this.showToast('All stored credentials and meeting data have been purged.', 'success');
     } catch {
       this.showToast('Failed to purge data.', 'info');
     }
   }
 
-  switchTab(tab: 'profile' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'): void {
+  async switchTab(tab: typeof this.activeTab extends () => infer R ? R : never): Promise<void> {
     this.activeTab.set(tab);
     if (tab === 'diagnostics') {
-      this.loadDiagnostics();
+      await this.refreshDiagnostics();
+    } else if (tab === 'audio') {
+      await this.refreshWhisperStatus();
+      await this.refreshMacosPermissions();
+      await this.enumerateAudioDevices();
     }
   }
 
-  async loadDiagnostics(): Promise<void> {
+  async refreshDiagnostics(): Promise<void> {
     this.isLoadingDiagnostics.set(true);
     try {
-      const data = await this.ipcService.getDiagnostics();
-      this.diagnostics.set(data);
+      const diag = await this.ipcService.getDiagnostics();
+      this.diagnostics.set(diag);
     } catch (err) {
       console.warn('[SettingsComponent] Failed to load diagnostics:', err);
     } finally {
@@ -390,20 +680,24 @@ export class SettingsComponent implements OnInit {
     }
   }
 
-  formatUptime(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    if (m === 0) return `${s}s`;
-    return `${m}m ${s}s`;
+  async loadDiagnostics(): Promise<void> {
+    return this.refreshDiagnostics();
   }
 
-  private showToast(msg: string, type: 'success' | 'info'): void {
-    this.toastMessage.set(msg);
+  formatUptime(sec: number): string {
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (hrs > 0) return `${hrs}h ${mins}m ${s}s`;
+    if (mins > 0) return `${mins}m ${s}s`;
+    return `${s}s`;
+  }
+
+  showToast(message: string, type: 'success' | 'info' = 'success'): void {
+    this.toastMessage.set(message);
     this.toastType.set(type);
     setTimeout(() => {
-      if (this.toastMessage() === msg) {
-        this.toastMessage.set(null);
-      }
-    }, 3000);
+      this.toastMessage.set(null);
+    }, 3200);
   }
 }

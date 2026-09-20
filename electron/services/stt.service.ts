@@ -1,15 +1,19 @@
-import { TranscriptSegment } from '@shared/ipc';
+import { TranscriptSegment, AudioChunkPayload, TranscriptionMode } from '@shared/ipc';
+import { WhisperService } from './whisper.service';
 
 export interface SttOptions {
+  provider?: 'deepgram' | 'simulation' | 'local-whisper';
   apiKey?: string;
   language?: 'en' | 'hi' | 'multi';
   diarize?: boolean;
+  transcriptionMode?: TranscriptionMode;
+  whisperModel?: string;
 }
 
 export interface ISttService {
   start(onSegment: (segment: TranscriptSegment) => void, options?: SttOptions): Promise<void>;
   stop(): Promise<void>;
-  feedAudio(chunk: ArrayBuffer): void;
+  feedAudio(chunk: AudioChunkPayload): void;
   getProviderName(): string;
   isActive(): boolean;
   isConnected(): boolean;
@@ -35,7 +39,7 @@ export class SttService implements ISttService {
   private connected = false;
   private onSegmentCallback: ((segment: TranscriptSegment) => void) | null = null;
   private ws: WebSocket | null = null;
-  private providerName = 'Deepgram Streaming';
+  private providerName = 'Local Whisper (Apple Silicon Metal)';
   private sessionStartTime = 0;
   private simTimer: NodeJS.Timeout | null = null;
   private simIndex = 0;
@@ -43,9 +47,21 @@ export class SttService implements ISttService {
   private maxRetries = 4;
   private reconnectTimer: NodeJS.Timeout | null = null;
 
+  readonly whisperService = new WhisperService();
+  private currentProvider: 'deepgram' | 'simulation' | 'local-whisper' = 'local-whisper';
+  private transcriptionMode: TranscriptionMode = 'other-only';
+
   constructor() {
-    if (!process.env.DEEPGRAM_API_KEY) {
+    // If whisper-cli is available, prefer local-whisper by default for free private transcription
+    if (this.whisperService.getStatus().available) {
+      this.providerName = 'Local Whisper (Apple Silicon Metal)';
+      this.currentProvider = 'local-whisper';
+    } else if (process.env.DEEPGRAM_API_KEY) {
+      this.providerName = 'Deepgram Streaming';
+      this.currentProvider = 'deepgram';
+    } else {
       this.providerName = 'Local Meeting STT Simulator';
+      this.currentProvider = 'simulation';
     }
   }
 
@@ -53,12 +69,28 @@ export class SttService implements ISttService {
     return this.providerName;
   }
 
+  getCurrentProvider(): 'deepgram' | 'simulation' | 'local-whisper' {
+    return this.currentProvider;
+  }
+
   isActive(): boolean {
     return this.active;
   }
 
   isConnected(): boolean {
+    if (this.currentProvider === 'local-whisper') {
+      return this.active && this.whisperService.isActive();
+    }
     return this.connected || (this.active && !this.ws);
+  }
+
+  setTranscriptionMode(mode: TranscriptionMode): void {
+    this.transcriptionMode = mode;
+    console.log(`[SttService] Transcription mode set to: ${mode}`);
+  }
+
+  getTranscriptionMode(): TranscriptionMode {
+    return this.transcriptionMode;
   }
 
   async start(onSegment: (segment: TranscriptSegment) => void, options: SttOptions = {}): Promise<void> {
@@ -68,8 +100,24 @@ export class SttService implements ISttService {
     this.sessionStartTime = Date.now();
     this.retryCount = 0;
 
+    if (options.transcriptionMode) {
+      this.transcriptionMode = options.transcriptionMode;
+    }
+
+    const provider = options.provider || (this.whisperService.getStatus().available ? 'local-whisper' : 'simulation');
+    this.currentProvider = provider;
+
+    if (provider === 'local-whisper') {
+      this.providerName = 'Local Whisper (Apple Silicon Metal)';
+      this.connected = true;
+      await this.whisperService.start(onSegment, {
+        model: options.whisperModel || 'base.en',
+      });
+      return;
+    }
+
     const apiKey = options.apiKey || process.env.DEEPGRAM_API_KEY;
-    if (apiKey) {
+    if (provider === 'deepgram' && apiKey) {
       this.providerName = 'Deepgram WebSocket';
       this.connectDeepgram(apiKey, options);
     } else {
@@ -98,15 +146,37 @@ export class SttService implements ISttService {
       clearTimeout(this.simTimer);
       this.simTimer = null;
     }
+
+    await this.whisperService.stop();
     this.onSegmentCallback = null;
   }
 
-  feedAudio(chunk: ArrayBuffer): void {
+  feedAudio(chunk: AudioChunkPayload): void {
     if (!this.active) return;
+
+    let channel: 'system' | 'mic' = 'system';
+    let buffer: ArrayBuffer;
+
+    if ('channel' in chunk && 'buffer' in chunk) {
+      channel = chunk.channel;
+      buffer = chunk.buffer;
+    } else {
+      buffer = chunk as ArrayBuffer;
+    }
+
+    // Mode A (Other Participant Only): Mute/ignore microphone channel completely!
+    if (this.transcriptionMode === 'other-only' && channel === 'mic') {
+      return;
+    }
+
+    if (this.currentProvider === 'local-whisper') {
+      this.whisperService.feedPcmChunk(buffer, channel);
+      return;
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
-        this.ws.send(chunk);
+        this.ws.send(buffer);
       } catch (err) {
         console.warn('[SttService] Error sending audio chunk to WebSocket:', err);
       }
@@ -169,23 +239,24 @@ export class SttService implements ISttService {
         if (this.active) {
           this.retryCount++;
           if (this.retryCount <= this.maxRetries) {
-            // Exponential backoff with jitter
             const delay = Math.min(15000, 1000 * Math.pow(2, this.retryCount - 1) + Math.random() * 500);
             console.log(`[SttService] WebSocket disconnected. Retry ${this.retryCount}/${this.maxRetries} in ${Math.round(delay)}ms...`);
             this.reconnectTimer = setTimeout(() => {
               if (this.active) this.connectDeepgram(apiKey);
             }, delay);
           } else {
-            console.warn('[SttService] Max retries reached, failing over to local meeting simulation.');
-            this.providerName = 'Local Meeting STT (Fallback Mode)';
-            this.startSimulationStream();
+            console.warn('[SttService] Max retries reached, failing over to local Whisper.');
+            this.providerName = 'Local Whisper (Apple Silicon Metal)';
+            this.currentProvider = 'local-whisper';
+            this.whisperService.start(this.onSegmentCallback!);
           }
         }
       };
     } catch (err) {
-      console.warn('[SttService] WebSocket initialization failed, falling back to simulator:', err);
-      this.providerName = 'Local Meeting STT (Simulation Mode)';
-      this.startSimulationStream();
+      console.warn('[SttService] WebSocket initialization failed, falling back to local Whisper:', err);
+      this.providerName = 'Local Whisper (Apple Silicon Metal)';
+      this.currentProvider = 'local-whisper';
+      this.whisperService.start(this.onSegmentCallback!);
     }
   }
 
@@ -216,16 +287,14 @@ export class SttService implements ISttService {
           isFinal,
           startMs,
           endMs: Date.now() - this.sessionStartTime,
-          speaker: 'Speaker 1',
+          speaker: 'Other',
         };
         this.onSegmentCallback(segment);
       }
 
       if (!isFinal) {
-        // Stream next interim token in 250-450ms
         this.simTimer = setTimeout(streamNextToken, 250 + Math.random() * 200);
       } else {
-        // Pause between sentences (3-5s), then stream next sentence
         this.simTimer = setTimeout(() => {
           if (this.active) {
             this.startSimulationStream();
@@ -234,7 +303,6 @@ export class SttService implements ISttService {
       }
     };
 
-    // Begin streaming tokens for this sentence
     this.simTimer = setTimeout(streamNextToken, 800);
   }
 }

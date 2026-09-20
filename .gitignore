@@ -4,6 +4,7 @@
 /dist
 /dist-electron
 /release
+/models
 .env
 /tmp
 /out-tsc

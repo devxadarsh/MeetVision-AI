@@ -17,6 +17,7 @@ import {
   TranscriptSegment,
   AnswerChunk,
   MeetingSummary,
+  TranscriptionMode,
 } from '@shared/ipc';
 
 interface DummyQuestionTemplate {
@@ -106,6 +107,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly isSettingsOpen = signal(false);
   readonly overlayVersion = signal<'v1' | 'v2'>('v1');
   readonly multiWorkspace = signal<boolean>(true);
+  readonly transcriptionMode = signal<TranscriptionMode>('other-only');
+  readonly hasMicPermission = signal<boolean>(true);
 
   // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
   readonly currentTab = signal<'questions' | 'transcript' | 'summary'>('questions');
@@ -149,6 +152,27 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return list.every((q) => collapsed.has(q.id));
   });
 
+  readonly latestSpeech = computed(() => {
+    const interim = this.activeInterim();
+    if (interim && interim.text && interim.text.trim().length > 0) {
+      return {
+        text: interim.text,
+        speaker: interim.speaker || 'You',
+        isLive: true,
+      };
+    }
+    const segs = this.transcriptSegments();
+    if (segs.length > 0) {
+      const last = segs[segs.length - 1];
+      return {
+        text: last.text,
+        speaker: last.speaker || 'You',
+        isLive: false,
+      };
+    }
+    return null;
+  });
+
   // Telemetry Teleprompter Metrics (Milestone 5)
   readonly wordCount = computed(() => {
     return this.transcriptSegments().reduce(
@@ -174,6 +198,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeSettingsVisibility?: () => void;
   private unsubscribeOverlayVersion?: () => void;
   private unsubscribeMultiWorkspace?: () => void;
+  private unsubscribeTranscriptionMode?: () => void;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
@@ -203,6 +228,14 @@ export class OverlayComponent implements OnInit, OnDestroy {
       if (typeof settings.multiWorkspace === 'boolean') {
         this.multiWorkspace.set(settings.multiWorkspace);
       }
+      if (settings.transcriptionMode) {
+        this.transcriptionMode.set(settings.transcriptionMode);
+      } else {
+        const mode = await this.ipcService.getTranscriptionMode();
+        this.transcriptionMode.set(mode);
+      }
+      const perms = await this.ipcService.getMacosPermissions();
+      this.hasMicPermission.set(perms.microphone === 'granted');
       if (!settings.hasAcceptedConsent) {
         this.showConsentModal.set(true);
         this.isListening.set(false);
@@ -219,14 +252,12 @@ export class OverlayComponent implements OnInit, OnDestroy {
       this.isListening.set(true);
       this.showToast('Consent recorded. Audio capture active.');
     } catch (err) {
-      console.warn('[OverlayComponent] Failed accepting consent:', err);
+      console.warn('[OverlayComponent] Failed to record consent:', err);
     }
   }
 
   ngOnDestroy(): void {
-    if (this.timerInterval) {
-      clearInterval(this.timerInterval);
-    }
+    if (this.timerInterval) clearInterval(this.timerInterval);
     if (this.unsubscribeHotkey) this.unsubscribeHotkey();
     if (this.unsubscribeAudioLevel) this.unsubscribeAudioLevel();
     if (this.unsubscribeTranscript) this.unsubscribeTranscript();
@@ -236,6 +267,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (this.unsubscribeSettingsVisibility) this.unsubscribeSettingsVisibility();
     if (this.unsubscribeOverlayVersion) this.unsubscribeOverlayVersion();
     if (this.unsubscribeMultiWorkspace) this.unsubscribeMultiWorkspace();
+    if (this.unsubscribeTranscriptionMode) this.unsubscribeTranscriptionMode();
   }
 
   private seedInitialQuestions(): void {
@@ -366,6 +398,22 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.unsubscribeAnswerChunk = this.ipcService.onAnswerChunk((chunk: AnswerChunk) => {
       this.handleAnswerChunk(chunk);
     });
+
+    // Reactive Transcription Mode (Mode A: Other Only vs Mode B: Everyone)
+    this.unsubscribeTranscriptionMode = this.ipcService.onTranscriptionModeChanged((mode) => {
+      this.transcriptionMode.set(mode);
+    });
+  }
+
+  async toggleTranscriptionMode(): Promise<void> {
+    const nextMode = this.transcriptionMode() === 'other-only' ? 'everyone' : 'other-only';
+    this.transcriptionMode.set(nextMode);
+    await this.ipcService.setTranscriptionMode(nextMode);
+    this.showToast(
+      nextMode === 'other-only'
+        ? 'Mode: Other Participant Only (Mic Muted)'
+        : 'Mode: Everyone (Meeting Audio + Microphone)'
+    );
   }
 
   private handleNewQuestion(question: Question): void {

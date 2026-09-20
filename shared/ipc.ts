@@ -77,8 +77,46 @@ export interface ContextProfile {
   tone: 'concise' | 'friendly' | 'formal';
 }
 
+export type TranscriptionMode = 'other-only' | 'everyone';
+
+export type AudioChunkPayload =
+  | ArrayBuffer
+  | {
+      channel: 'system' | 'mic';
+      buffer: ArrayBuffer;
+    };
+
+export interface WhisperStatus {
+  available: boolean;
+  binaryPath?: string;
+  gpuAcceleration?: string;
+  installedModels: string[];
+  currentModel: string;
+  isDownloading?: boolean;
+  downloadProgress?: number;
+  error?: string;
+}
+
+export interface WhisperDownloadProgress {
+  model: string;
+  percent: number;
+  downloadedMb: number;
+  totalMb: number;
+  completed: boolean;
+  error?: string;
+}
+
+export interface MacosPermissions {
+  microphone: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown';
+  screen: 'granted' | 'denied' | 'not-determined' | 'unknown';
+}
+
 export interface AppSettings {
-  sttProvider: 'deepgram' | 'simulation';
+  sttProvider: 'deepgram' | 'simulation' | 'local-whisper';
+  transcriptionMode?: TranscriptionMode;
+  whisperModel?: string;
+  meetingAudioDeviceId?: string;
+  micAudioDeviceId?: string;
   llmProvider: 'anthropic' | 'local';
   llmModel: string;
   temperature: number;
@@ -104,6 +142,16 @@ export interface AppSettings {
   overlayOpacity?: number;
   overlayVersion?: 'v1' | 'v2';
   multiWorkspace?: boolean;
+  // Voice Frequency Filter & Speech-to-Text Tuning
+  voiceFilterEnabled?: boolean;
+  voiceLowCutHz?: number;
+  voiceHighCutHz?: number;
+  voiceFilterPreset?: 'optimal-voice' | 'aggressive-noise-cut' | 'wide-natural' | 'custom';
+  vadSensitivity?: number;
+  noiseSuppression?: boolean;
+  echoCancellation?: boolean;
+  autoGainControl?: boolean;
+  whisperPromptPriming?: boolean;
 }
 
 export interface AppDiagnostics {
@@ -160,6 +208,7 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_OPEN: 'settings:open',
+  SETTINGS_CHANGED: 'settings:changed',
   SETTINGS_VISIBILITY_CHANGED: 'settings:visibility-changed',
   // Milestone 6: Consent & Data Purge
   CONSENT_ACCEPT: 'consent:accept',
@@ -170,6 +219,15 @@ export const IPC_CHANNELS = {
   KNOWLEDGE_REMOVE: 'knowledge:remove',
   SUMMARY_GENERATE: 'summary:generate',
   SUMMARY_EXPORT: 'summary:export',
+  // Local Real-Time Transcription & macOS Audio Channels
+  TRANSCRIPTION_MODE_GET: 'transcription-mode:get',
+  TRANSCRIPTION_MODE_SET: 'transcription-mode:set',
+  TRANSCRIPTION_MODE_CHANGED: 'transcription-mode:changed',
+  WHISPER_STATUS_GET: 'whisper:status-get',
+  WHISPER_MODEL_DOWNLOAD: 'whisper:model-download',
+  WHISPER_DOWNLOAD_PROGRESS: 'whisper:download-progress',
+  MACOS_PERMISSIONS_GET: 'macos:permissions-get',
+  MACOS_PERMISSION_REQUEST: 'macos:permission-request',
 } as const;
 
 export interface ElectronAPI {
@@ -192,12 +250,23 @@ export interface ElectronAPI {
   startSession: () => Promise<void>;
   stopSession: () => Promise<void>;
   getSessionStatus: () => Promise<SessionStatus>;
-  sendAudioChunk: (chunk: ArrayBuffer) => void;
+  sendAudioChunk: (chunk: AudioChunkPayload) => void;
   sendAudioLevel: (level: number) => void;
   onAudioLevel: (callback: (level: number) => void) => () => void;
   onTranscriptUpdate: (callback: (segment: TranscriptSegment) => void) => () => void;
   clearTranscript: () => Promise<void>;
   onTranscriptClear: (callback: () => void) => () => void;
+  // Transcription Mode (Mode A: Other Only vs Mode B: Everyone)
+  getTranscriptionMode: () => Promise<TranscriptionMode>;
+  setTranscriptionMode: (mode: TranscriptionMode) => Promise<TranscriptionMode>;
+  onTranscriptionModeChanged: (callback: (mode: TranscriptionMode) => void) => () => void;
+  // Local Whisper STT Engine Management
+  getWhisperStatus: () => Promise<WhisperStatus>;
+  downloadWhisperModel: (modelName: string) => Promise<boolean>;
+  onWhisperDownloadProgress: (callback: (progress: WhisperDownloadProgress) => void) => () => void;
+  // macOS Permissions
+  getMacosPermissions: () => Promise<MacosPermissions>;
+  requestMacosMicrophonePermission: () => Promise<boolean>;
   // Question & Answer channels (Milestone 3)
   onQuestionNew: (callback: (question: Question) => void) => () => void;
   onAnswerChunk: (callback: (chunk: AnswerChunk) => void) => () => void;
@@ -206,6 +275,7 @@ export interface ElectronAPI {
   getSettings: () => Promise<AppSettings>;
   setSettings: (settings: AppSettings) => Promise<AppSettings>;
   openSettings: () => Promise<boolean>;
+  onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void;
   onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void) => () => void;
   // Milestone 6: Consent & Data Purge
   acceptConsent: () => Promise<void>;

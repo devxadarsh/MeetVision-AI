@@ -10,6 +10,10 @@ import {
   RegeneratePayload,
   AppSettings,
   AppDiagnostics,
+  TranscriptionMode,
+  AudioChunkPayload,
+  WhisperStatus,
+  MacosPermissions,
 } from '@shared/ipc';
 import { SttService } from './services/stt.service';
 import { QuestionDetector } from './services/detector.service';
@@ -494,6 +498,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SESSION_START, async () => {
     const settings = storeService.getSettings();
     await sttService.start(handleTranscriptSegment, {
+      provider: settings.sttProvider,
+      whisperModel: settings.whisperModel,
+      transcriptionMode: settings.transcriptionMode,
       apiKey: storeService.getDecryptedDeepgramKey(),
       language: settings.sttLanguage,
       diarize: true,
@@ -514,7 +521,7 @@ function registerIpcHandlers(): void {
   });
 
   // Audio chunk from capture window
-  ipcMain.on(IPC_CHANNELS.AUDIO_CHUNK, (_event, chunk: ArrayBuffer) => {
+  ipcMain.on(IPC_CHANNELS.AUDIO_CHUNK, (_event, chunk: AudioChunkPayload) => {
     sttService.feedAudio(chunk);
   });
 
@@ -570,6 +577,16 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
     const updated = storeService.updateSettings(newSettings);
+    if (typeof updated.whisperPromptPriming === 'boolean') {
+      sttService.whisperService.setPromptPriming(updated.whisperPromptPriming);
+    }
+
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.SETTINGS_CHANGED, updated);
+      }
+    }
+
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (typeof updated.overlayOpacity === 'number') {
         mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, updated.overlayOpacity);
@@ -670,6 +687,84 @@ function registerIpcHandlers(): void {
       activeWindows: windows.length,
     };
   });
+
+  // Transcription Mode (Mode A: Other Only vs Mode B: Everyone)
+  ipcMain.handle(IPC_CHANNELS.TRANSCRIPTION_MODE_GET, async (): Promise<TranscriptionMode> => {
+    return storeService.getTranscriptionMode();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.TRANSCRIPTION_MODE_SET,
+    async (_event, mode: TranscriptionMode): Promise<TranscriptionMode> => {
+      const updated = storeService.setTranscriptionMode(mode);
+      sttService.setTranscriptionMode(updated);
+
+      // Broadcast mode change to all active windows
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.TRANSCRIPTION_MODE_CHANGED, updated);
+        }
+      }
+      return updated;
+    }
+  );
+
+  // Local Whisper Engine Status & Model Management
+  sttService.whisperService.onProgressCallback = (progress) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, progress);
+      }
+    }
+  };
+
+  ipcMain.handle(IPC_CHANNELS.WHISPER_STATUS_GET, async (): Promise<WhisperStatus> => {
+    return sttService.whisperService.getStatus();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.WHISPER_MODEL_DOWNLOAD,
+    async (_event, modelName: string): Promise<boolean> => {
+      try {
+        return await sttService.whisperService.downloadModel(modelName);
+      } catch (err) {
+        console.warn('[Main] Whisper model download error:', err);
+        throw err;
+      }
+    }
+  );
+
+  // macOS Permissions
+  ipcMain.handle(IPC_CHANNELS.MACOS_PERMISSIONS_GET, async (): Promise<MacosPermissions> => {
+    if (process.platform === 'darwin') {
+      try {
+        const micStatus = systemPreferences.getMediaAccessStatus('microphone');
+        const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+        return {
+          microphone: micStatus as MacosPermissions['microphone'],
+          screen: screenStatus as MacosPermissions['screen'],
+        };
+      } catch (err) {
+        console.warn('[Main] Error getting macOS permissions:', err);
+      }
+    }
+    return {
+      microphone: 'granted',
+      screen: 'granted',
+    };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MACOS_PERMISSION_REQUEST, async (): Promise<boolean> => {
+    if (process.platform === 'darwin') {
+      try {
+        return await systemPreferences.askForMediaAccess('microphone');
+      } catch (err) {
+        console.warn('[Main] Error asking for microphone media access:', err);
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 app.whenReady().then(() => {
@@ -761,6 +856,9 @@ app.whenReady().then(() => {
   if (storeService.hasAcceptedConsent()) {
     const settings = storeService.getSettings();
     sttService.start(handleTranscriptSegment, {
+      provider: settings.sttProvider,
+      whisperModel: settings.whisperModel,
+      transcriptionMode: settings.transcriptionMode,
       apiKey: storeService.getDecryptedDeepgramKey(),
       language: settings.sttLanguage,
       diarize: true,

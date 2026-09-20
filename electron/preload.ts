@@ -9,6 +9,11 @@ import {
   AnswerChunk,
   RegeneratePayload,
   AppSettings,
+  TranscriptionMode,
+  AudioChunkPayload,
+  WhisperStatus,
+  WhisperDownloadProgress,
+  MacosPermissions,
 } from '@shared/ipc';
 
 const api: ElectronAPI = {
@@ -90,7 +95,7 @@ const api: ElectronAPI = {
   getSessionStatus: (): Promise<SessionStatus> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STATUS);
   },
-  sendAudioChunk: (chunk: ArrayBuffer): void => {
+  sendAudioChunk: (chunk: AudioChunkPayload): void => {
     ipcRenderer.send(IPC_CHANNELS.AUDIO_CHUNK, chunk);
   },
   sendAudioLevel: (level: number): void => {
@@ -126,6 +131,45 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.TRANSCRIPT_CLEAR, handler);
     };
   },
+  // Transcription Mode (Mode A: Other Only vs Mode B: Everyone)
+  getTranscriptionMode: (): Promise<TranscriptionMode> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.TRANSCRIPTION_MODE_GET);
+  },
+  setTranscriptionMode: (mode: TranscriptionMode): Promise<TranscriptionMode> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.TRANSCRIPTION_MODE_SET, mode);
+  },
+  onTranscriptionModeChanged: (callback: (mode: TranscriptionMode) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, mode: TranscriptionMode) => {
+      callback(mode);
+    };
+    ipcRenderer.on(IPC_CHANNELS.TRANSCRIPTION_MODE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.TRANSCRIPTION_MODE_CHANGED, handler);
+    };
+  },
+  // Local Whisper STT Engine Management
+  getWhisperStatus: (): Promise<WhisperStatus> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.WHISPER_STATUS_GET);
+  },
+  downloadWhisperModel: (modelName: string): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.WHISPER_MODEL_DOWNLOAD, modelName);
+  },
+  onWhisperDownloadProgress: (callback: (progress: WhisperDownloadProgress) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, progress: WhisperDownloadProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, handler);
+    };
+  },
+  // macOS Permissions
+  getMacosPermissions: (): Promise<MacosPermissions> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MACOS_PERMISSIONS_GET);
+  },
+  requestMacosMicrophonePermission: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MACOS_PERMISSION_REQUEST);
+  },
   // Question & Answer channels (Milestone 3)
   onQuestionNew: (callback: (question: Question) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, question: Question) => {
@@ -158,8 +202,17 @@ const api: ElectronAPI = {
   openSettings: (): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_OPEN);
   },
+  onSettingsChanged: (callback: (settings: AppSettings) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, s: AppSettings) => {
+      callback(s);
+    };
+    ipcRenderer.on(IPC_CHANNELS.SETTINGS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SETTINGS_CHANGED, handler);
+    };
+  },
   onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, isOpen: boolean) => {
+    const handler = (_event: IpcRendererEvent, isOpen: boolean) => {
       callback(isOpen);
     };
     ipcRenderer.on(IPC_CHANNELS.SETTINGS_VISIBILITY_CHANGED, handler);

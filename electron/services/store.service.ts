@@ -1,10 +1,14 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AppSettings, ContextProfile } from '@shared/ipc';
+import { AppSettings, ContextProfile, TranscriptionMode } from '@shared/ipc';
 
 interface StoredConfigFile {
-  sttProvider: 'deepgram' | 'simulation';
+  sttProvider: 'deepgram' | 'simulation' | 'local-whisper';
+  transcriptionMode?: TranscriptionMode;
+  whisperModel?: string;
+  meetingAudioDeviceId?: string;
+  micAudioDeviceId?: string;
   llmProvider: 'anthropic' | 'local';
   llmModel: string;
   temperature: number;
@@ -22,6 +26,15 @@ interface StoredConfigFile {
   overlayOpacity?: number;
   overlayVersion?: 'v1' | 'v2';
   multiWorkspace?: boolean;
+  voiceFilterEnabled?: boolean;
+  voiceLowCutHz?: number;
+  voiceHighCutHz?: number;
+  voiceFilterPreset?: 'optimal-voice' | 'aggressive-noise-cut' | 'wide-natural' | 'custom';
+  vadSensitivity?: number;
+  noiseSuppression?: boolean;
+  echoCancellation?: boolean;
+  autoGainControl?: boolean;
+  whisperPromptPriming?: boolean;
 }
 
 const DEFAULT_PROFILE: ContextProfile = {
@@ -33,7 +46,9 @@ const DEFAULT_PROFILE: ContextProfile = {
 };
 
 const DEFAULT_SETTINGS: StoredConfigFile = {
-  sttProvider: 'simulation',
+  sttProvider: 'local-whisper',
+  transcriptionMode: 'everyone',
+  whisperModel: 'tiny.en',
   llmProvider: 'local',
   llmModel: 'claude-3-5-sonnet-20241022',
   temperature: 0.3,
@@ -41,6 +56,15 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   overlayOpacity: 0.88,
   overlayVersion: 'v1',
   multiWorkspace: true,
+  voiceFilterEnabled: true,
+  voiceLowCutHz: 120,
+  voiceHighCutHz: 4000,
+  voiceFilterPreset: 'optimal-voice',
+  vadSensitivity: 0.006,
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: true,
+  whisperPromptPriming: true,
   profile: DEFAULT_PROFILE,
 };
 
@@ -134,7 +158,11 @@ export class StoreService {
     const hasDeepgram = Boolean(this.getDecryptedDeepgramKey());
 
     return {
-      sttProvider: this.data.sttProvider,
+      sttProvider: this.data.sttProvider || 'local-whisper',
+      transcriptionMode: this.data.transcriptionMode || 'other-only',
+      whisperModel: this.data.whisperModel || 'base.en',
+      meetingAudioDeviceId: this.data.meetingAudioDeviceId,
+      micAudioDeviceId: this.data.micAudioDeviceId,
       llmProvider: this.data.llmProvider,
       llmModel: this.data.llmModel,
       temperature: this.data.temperature,
@@ -153,7 +181,26 @@ export class StoreService {
       overlayOpacity: typeof this.data.overlayOpacity === 'number' ? this.data.overlayOpacity : 0.88,
       overlayVersion: this.data.overlayVersion || 'v1',
       multiWorkspace: typeof this.data.multiWorkspace === 'boolean' ? this.data.multiWorkspace : true,
+      voiceFilterEnabled: this.data.voiceFilterEnabled !== false,
+      voiceLowCutHz: typeof this.data.voiceLowCutHz === 'number' ? this.data.voiceLowCutHz : 120,
+      voiceHighCutHz: typeof this.data.voiceHighCutHz === 'number' ? this.data.voiceHighCutHz : 4000,
+      voiceFilterPreset: this.data.voiceFilterPreset || 'optimal-voice',
+      vadSensitivity: typeof this.data.vadSensitivity === 'number' ? this.data.vadSensitivity : 0.006,
+      noiseSuppression: this.data.noiseSuppression !== false,
+      echoCancellation: this.data.echoCancellation !== false,
+      autoGainControl: this.data.autoGainControl !== false,
+      whisperPromptPriming: this.data.whisperPromptPriming !== false,
     };
+  }
+
+  getTranscriptionMode(): TranscriptionMode {
+    return this.data.transcriptionMode || 'other-only';
+  }
+
+  setTranscriptionMode(mode: TranscriptionMode): TranscriptionMode {
+    this.data.transcriptionMode = mode;
+    this.saveToDisk();
+    return mode;
   }
 
   acceptConsent(): void {
@@ -207,6 +254,10 @@ export class StoreService {
     }
 
     if (newSettings.sttProvider) this.data.sttProvider = newSettings.sttProvider;
+    if (newSettings.transcriptionMode) this.data.transcriptionMode = newSettings.transcriptionMode;
+    if (newSettings.whisperModel) this.data.whisperModel = newSettings.whisperModel;
+    if (newSettings.meetingAudioDeviceId !== undefined) this.data.meetingAudioDeviceId = newSettings.meetingAudioDeviceId;
+    if (newSettings.micAudioDeviceId !== undefined) this.data.micAudioDeviceId = newSettings.micAudioDeviceId;
     if (newSettings.llmProvider) this.data.llmProvider = newSettings.llmProvider;
     if (newSettings.llmModel) this.data.llmModel = newSettings.llmModel;
     if (typeof newSettings.temperature === 'number') this.data.temperature = newSettings.temperature;
@@ -219,6 +270,15 @@ export class StoreService {
     if (typeof newSettings.overlayOpacity === 'number') this.data.overlayOpacity = newSettings.overlayOpacity;
     if (newSettings.overlayVersion) this.data.overlayVersion = newSettings.overlayVersion;
     if (typeof newSettings.multiWorkspace === 'boolean') this.data.multiWorkspace = newSettings.multiWorkspace;
+    if (typeof newSettings.voiceFilterEnabled === 'boolean') this.data.voiceFilterEnabled = newSettings.voiceFilterEnabled;
+    if (typeof newSettings.voiceLowCutHz === 'number') this.data.voiceLowCutHz = newSettings.voiceLowCutHz;
+    if (typeof newSettings.voiceHighCutHz === 'number') this.data.voiceHighCutHz = newSettings.voiceHighCutHz;
+    if (newSettings.voiceFilterPreset) this.data.voiceFilterPreset = newSettings.voiceFilterPreset;
+    if (typeof newSettings.vadSensitivity === 'number') this.data.vadSensitivity = newSettings.vadSensitivity;
+    if (typeof newSettings.noiseSuppression === 'boolean') this.data.noiseSuppression = newSettings.noiseSuppression;
+    if (typeof newSettings.echoCancellation === 'boolean') this.data.echoCancellation = newSettings.echoCancellation;
+    if (typeof newSettings.autoGainControl === 'boolean') this.data.autoGainControl = newSettings.autoGainControl;
+    if (typeof newSettings.whisperPromptPriming === 'boolean') this.data.whisperPromptPriming = newSettings.whisperPromptPriming;
 
     if (newSettings.profile) {
       this.data.profile = {
