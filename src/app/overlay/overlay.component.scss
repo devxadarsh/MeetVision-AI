@@ -907,47 +907,81 @@ kbd {
   }
 }
 
-/* Custom Tooltip */
+/* Custom Tooltip (Smart Non-Clipping Placement) */
 .custom-tooltip {
   position: fixed;
-  transform: translate(-50%, -100%);
-  background: rgba(30, 30, 40, 0.98);
+  background: rgba(22, 27, 38, 0.96);
   color: #f3f4f6;
   font-size: 11px;
   font-weight: 500;
   padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
   pointer-events: none;
   z-index: 9999;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  animation: tooltipFadeIn 0.15s ease-out;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-width: calc(100vw - 24px);
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  transition: opacity 0.12s ease-out;
 
-  // Tooltip arrow pointing down
-  &::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 5px solid transparent;
-    border-top-color: rgba(30, 30, 40, 0.98);
-    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+  // Placement when rendered ABOVE the target button
+  &.placement-top {
+    transform: translate(-50%, -100%);
+    animation: tooltipFadeInTop 0.15s ease-out;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: calc(50% + var(--arrow-offset, 0px));
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: rgba(22, 27, 38, 0.96);
+      filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+    }
+  }
+
+  // Placement when rendered BELOW the target button
+  &.placement-bottom {
+    transform: translate(-50%, 0);
+    animation: tooltipFadeInBottom 0.15s ease-out;
+
+    &::after {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: calc(50% + var(--arrow-offset, 0px));
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-bottom-color: rgba(22, 27, 38, 0.96);
+      filter: drop-shadow(0 -1px 2px rgba(0, 0, 0, 0.3));
+    }
   }
 }
 
-@keyframes tooltipFadeIn {
+@keyframes tooltipFadeInTop {
   from {
     opacity: 0;
     transform: translate(-50%, calc(-100% - 4px));
   }
-
   to {
     opacity: 1;
     transform: translate(-50%, -100%);
+  }
+}
+
+@keyframes tooltipFadeInBottom {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
   }
 }
 

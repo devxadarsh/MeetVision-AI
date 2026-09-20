@@ -8,6 +8,7 @@ import {
   computed,
   ElementRef,
   viewChild,
+  HostListener,
 } from '@angular/core';
 import { IpcService } from '../core/ipc.service';
 import {
@@ -120,9 +121,11 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly audioLevel = signal<number>(0);
   readonly sttProvider = signal<string>('Initializing STT...');
 
-  // Custom Tooltip State
+  // Custom Tooltip State (Smart non-clipping placement)
   readonly tooltipText = signal<string | null>(null);
   readonly tooltipPosition = signal<{ x: number; y: number }>({ x: 0, y: 0 });
+  readonly tooltipPlacement = signal<'top' | 'bottom'>('bottom');
+  readonly tooltipArrowOffset = signal<number>(0);
 
   // Set of collapsed question IDs
   readonly collapsedIds = signal<Set<string>>(new Set<string>());
@@ -871,15 +874,81 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }, 2500);
   }
 
+  @HostListener('window:keydown', ['$event'])
+  handleKeyboardNavigation(event: KeyboardEvent): void {
+    // Avoid moving the window if the user is typing in an input or textarea
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+
+    let deltaX = 0;
+    let deltaY = 0;
+    const step = event.shiftKey ? 40 : 10;
+
+    switch (event.key) {
+      case 'ArrowUp':
+        deltaY = -step;
+        break;
+      case 'ArrowDown':
+        deltaY = step;
+        break;
+      case 'ArrowLeft':
+        deltaX = -step;
+        break;
+      case 'ArrowRight':
+        deltaX = step;
+        break;
+      default:
+        return;
+    }
+
+    // Suppress default window scroll behavior
+    event.preventDefault();
+    this.ipcService.moveOverlay(deltaX, deltaY).catch((err) => {
+      console.warn('[OverlayComponent] Failed to move overlay window:', err);
+    });
+  }
+
   showTooltip(event: MouseEvent, text: string): void {
     const target = event.currentTarget as HTMLElement;
+    if (!target) return;
     const rect = target.getBoundingClientRect();
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
 
-    // Position tooltip above the button
-    this.tooltipPosition.set({
-      x: rect.left + rect.width / 2,
-      y: rect.top - 8
-    });
+    // Check vertical clearance:
+    // If rect.top is tight (< 45px) or space below is greater than space above, place below.
+    const spaceAbove = rect.top;
+    const spaceBelow = winH - rect.bottom;
+    const placement: 'top' | 'bottom' = (spaceAbove < 45 && spaceBelow >= 35) || spaceBelow > spaceAbove
+      ? 'bottom'
+      : 'top';
+
+    // Target element's horizontal center
+    const buttonCenterX = rect.left + rect.width / 2;
+
+    // Ensure the tooltip's center doesn't push its edges off screen
+    // Keep at least 80px from window left and right borders
+    const minCenterX = 80;
+    const maxCenterX = Math.max(minCenterX, winW - 80);
+    const clampedX = Math.max(minCenterX, Math.min(maxCenterX, buttonCenterX));
+
+    // Arrow offset: points at buttonCenterX even when clamped
+    const rawOffset = buttonCenterX - clampedX;
+    const arrowOffset = Math.max(-65, Math.min(65, rawOffset));
+
+    const y = placement === 'bottom' ? rect.bottom + 8 : rect.top - 8;
+
+    this.tooltipPlacement.set(placement);
+    this.tooltipPosition.set({ x: Math.round(clampedX), y: Math.round(y) });
+    this.tooltipArrowOffset.set(Math.round(arrowOffset));
     this.tooltipText.set(text);
   }
 

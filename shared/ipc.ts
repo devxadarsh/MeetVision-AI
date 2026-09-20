@@ -96,9 +96,11 @@ export interface AppSettings {
   consentAcceptedAt?: number;
   // Milestone 7: Language & Diarization
   sttLanguage?: 'en' | 'hi' | 'multi';
-  // Overlay Dimensions (Adjustable Length & Width), Opacity, Version & Multi-Workspace
+  // Overlay Dimensions (Adjustable Length & Width), Position, Opacity, Version & Multi-Workspace
   overlayWidth?: number;
   overlayHeight?: number;
+  overlayX?: number;
+  overlayY?: number;
   overlayOpacity?: number;
   overlayVersion?: 'v1' | 'v2';
   multiWorkspace?: boolean;
@@ -136,6 +138,7 @@ export const IPC_CHANNELS = {
   OVERLAY_GET_CLICK_THROUGH: 'overlay:get-click-through',
   OVERLAY_SET_SIZE: 'overlay:set-size',
   OVERLAY_GET_SIZE: 'overlay:get-size',
+  OVERLAY_MOVE: 'overlay:move',
   OVERLAY_SET_OPACITY: 'overlay:set-opacity',
   OVERLAY_OPACITY_CHANGED: 'overlay:opacity-changed',
   OVERLAY_SET_MULTI_WORKSPACE: 'overlay:set-multi-workspace',
@@ -176,6 +179,7 @@ export interface ElectronAPI {
   getClickThrough: () => Promise<boolean>;
   setOverlaySize: (width: number, height: number) => Promise<{ width: number; height: number }>;
   getOverlaySize: () => Promise<{ width: number; height: number }>;
+  moveOverlay: (deltaX: number, deltaY: number) => Promise<{ x: number; y: number }>;
   setOverlayOpacity: (opacity: number) => Promise<number>;
   onOverlayOpacityChanged: (callback: (opacity: number) => void) => () => void;
   setMultiWorkspace: (enabled: boolean) => Promise<boolean>;

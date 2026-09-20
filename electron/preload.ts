@@ -30,6 +30,9 @@ const api: ElectronAPI = {
   getOverlaySize: (): Promise<{ width: number; height: number }> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_SIZE);
   },
+  moveOverlay: (deltaX: number, deltaY: number): Promise<{ x: number; y: number }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_MOVE, { deltaX, deltaY });
+  },
   setOverlayOpacity: (opacity: number): Promise<number> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_OPACITY, opacity);
   },

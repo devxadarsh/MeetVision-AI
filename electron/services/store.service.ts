@@ -17,6 +17,8 @@ interface StoredConfigFile {
   sttLanguage?: 'en' | 'hi' | 'multi';
   overlayWidth?: number;
   overlayHeight?: number;
+  overlayX?: number;
+  overlayY?: number;
   overlayOpacity?: number;
   overlayVersion?: 'v1' | 'v2';
   multiWorkspace?: boolean;
@@ -146,6 +148,8 @@ export class StoreService {
       sttLanguage: this.data.sttLanguage,
       overlayWidth: this.data.overlayWidth,
       overlayHeight: this.data.overlayHeight,
+      overlayX: this.data.overlayX,
+      overlayY: this.data.overlayY,
       overlayOpacity: typeof this.data.overlayOpacity === 'number' ? this.data.overlayOpacity : 0.88,
       overlayVersion: this.data.overlayVersion || 'v1',
       multiWorkspace: typeof this.data.multiWorkspace === 'boolean' ? this.data.multiWorkspace : true,
@@ -210,6 +214,8 @@ export class StoreService {
     if (newSettings.sttLanguage) this.data.sttLanguage = newSettings.sttLanguage;
     if (typeof newSettings.overlayWidth === 'number') this.data.overlayWidth = newSettings.overlayWidth;
     if (typeof newSettings.overlayHeight === 'number') this.data.overlayHeight = newSettings.overlayHeight;
+    if (typeof newSettings.overlayX === 'number') this.data.overlayX = newSettings.overlayX;
+    if (typeof newSettings.overlayY === 'number') this.data.overlayY = newSettings.overlayY;
     if (typeof newSettings.overlayOpacity === 'number') this.data.overlayOpacity = newSettings.overlayOpacity;
     if (newSettings.overlayVersion) this.data.overlayVersion = newSettings.overlayVersion;
     if (typeof newSettings.multiWorkspace === 'boolean') this.data.multiWorkspace = newSettings.multiWorkspace;

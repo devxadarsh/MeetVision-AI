@@ -44,8 +44,12 @@ function createOverlayWindow(): void {
   const savedSettings = storeService.getSettings();
   const windowWidth = Math.max(300, Math.min(screenWidth - 40, savedSettings.overlayWidth || 380));
   const windowHeight = Math.max(400, Math.min(screenHeight - 64, savedSettings.overlayHeight || 600));
-  const x = Math.round((screenWidth - windowWidth) / 2);
-  const y = 32;
+  const x = typeof savedSettings.overlayX === 'number'
+    ? Math.max(0, Math.min(screenWidth - 100, savedSettings.overlayX))
+    : Math.round((screenWidth - windowWidth) / 2);
+  const y = typeof savedSettings.overlayY === 'number'
+    ? Math.max(0, Math.min(screenHeight - 100, savedSettings.overlayY))
+    : 32;
 
   mainWindow = new BrowserWindow({
     width: windowWidth,
@@ -77,6 +81,18 @@ function createOverlayWindow(): void {
       if (mainWindow && !mainWindow.isDestroyed()) {
         const [w, h] = mainWindow.getSize();
         storeService.updateSettings({ overlayWidth: w, overlayHeight: h });
+      }
+    }, 250);
+  });
+
+  // Persist position when moved
+  let moveTimeout: NodeJS.Timeout | null = null;
+  mainWindow.on('move', () => {
+    if (moveTimeout) clearTimeout(moveTimeout);
+    moveTimeout = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const [posX, posY] = mainWindow.getPosition();
+        storeService.updateSettings({ overlayX: posX, overlayY: posY });
       }
     }, 250);
   });
@@ -408,6 +424,32 @@ function registerIpcHandlers(): void {
     }
     return { width: 380, height: 600 };
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.OVERLAY_MOVE,
+    async (_event, { deltaX, deltaY }: { deltaX: number; deltaY: number }) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const [currentX, currentY] = mainWindow.getPosition();
+        const [width] = mainWindow.getSize();
+        const display = screen.getDisplayMatching(mainWindow.getBounds());
+        const { x: workX, y: workY, width: workW, height: workH } = display.workArea;
+
+        // Keep window reasonably within workArea
+        const minX = workX - width + 80;
+        const maxX = workX + workW - 80;
+        const minY = workY;
+        const maxY = workY + workH - 60;
+
+        const newX = Math.round(Math.max(minX, Math.min(maxX, currentX + (Number(deltaX) || 0))));
+        const newY = Math.round(Math.max(minY, Math.min(maxY, currentY + (Number(deltaY) || 0))));
+
+        mainWindow.setPosition(newX, newY);
+        storeService.updateSettings({ overlayX: newX, overlayY: newY });
+        return { x: newX, y: newY };
+      }
+      return null;
+    }
+  );
 
   ipcMain.handle(IPC_CHANNELS.OVERLAY_SET_OPACITY, async (_event, opacity: number) => {
     const clamped = Math.max(0.2, Math.min(1.0, Number(opacity) || 0.88));

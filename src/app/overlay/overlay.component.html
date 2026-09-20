@@ -503,6 +503,7 @@
       <footer class="overlay-footer">
         @if (showHotkeys()) {
           <div class="hotkeys-grid">
+            <span class="hotkey-item"><kbd>↑↓←→</kbd> Move</span>
             <span class="hotkey-item"><kbd>⌘⇧H</kbd> Hide</span>
             <span class="hotkey-item"><kbd>⌘⇧M</kbd> Click-Thru</span>
             <span class="hotkey-item"><kbd>⌘⇧C</kbd> Clear</span>
@@ -972,6 +973,7 @@
             </span>
           </div>
           <div class="v2-footer-right">
+            <span class="v2-footer-shortcut"><kbd>↑↓←→</kbd> Move</span>
             <span class="v2-footer-shortcut"><kbd>⌘⇧H</kbd> Hide</span>
             <span class="v2-footer-shortcut"><kbd>⌘⇧M</kbd> Passthrough</span>
             <span class="v2-footer-shortcut"><kbd>⌘⇧C</kbd> Clear</span>
@@ -990,12 +992,15 @@
         </svg>
       </div>
 
-      <!-- Custom Tooltip -->
+      <!-- Custom Tooltip (Smart Non-Clipping Placement) -->
       @if (tooltipText()) {
         <div
           class="custom-tooltip"
+          [class.placement-bottom]="tooltipPlacement() === 'bottom'"
+          [class.placement-top]="tooltipPlacement() === 'top'"
           [style.left.px]="tooltipPosition().x"
           [style.top.px]="tooltipPosition().y"
+          [style.--arrow-offset.px]="tooltipArrowOffset()"
         >
           {{ tooltipText() }}
         </div>

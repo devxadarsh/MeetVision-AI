@@ -77,6 +77,13 @@ export class IpcService {
     return this.api.getOverlaySize();
   }
 
+  async moveOverlay(deltaX: number, deltaY: number): Promise<{ x: number; y: number } | null> {
+    if (!this.api) {
+      return null;
+    }
+    return this.api.moveOverlay(deltaX, deltaY);
+  }
+
   async setOverlayOpacity(opacity: number): Promise<number> {
     if (!this.api) {
       return opacity;
