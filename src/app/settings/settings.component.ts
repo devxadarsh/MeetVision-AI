@@ -26,10 +26,12 @@ export class SettingsComponent implements OnInit {
   readonly diagnostics = signal<AppDiagnostics | null>(null);
   readonly isLoadingDiagnostics = signal(false);
 
-  // Overlay Dimensions & Transparency
+  // Overlay Dimensions & Transparency & Layout Mode
   readonly overlayWidth = signal(380);
   readonly overlayHeight = signal(600);
   readonly overlayOpacity = signal(0.88);
+  readonly overlayVersion = signal<'v1' | 'v2'>('v1');
+  readonly multiWorkspace = signal(true);
   readonly opacityPercent = computed(() => Math.round(this.overlayOpacity() * 100));
 
   readonly previewWidth = computed(() => {
@@ -106,10 +108,12 @@ export class SettingsComponent implements OnInit {
     this.hasDeepgramKey.set(Boolean(settings.hasDeepgramKey));
     this.isEncryptionAvailable.set(settings.isEncryptionAvailable !== false);
 
-    // Overlay Dimensions & Transparency
+    // Overlay Dimensions & Transparency & Layout Mode
     if (settings.overlayWidth) this.overlayWidth.set(settings.overlayWidth);
     if (settings.overlayHeight) this.overlayHeight.set(settings.overlayHeight);
     if (typeof settings.overlayOpacity === 'number') this.overlayOpacity.set(settings.overlayOpacity);
+    if (settings.overlayVersion) this.overlayVersion.set(settings.overlayVersion);
+    if (typeof settings.multiWorkspace === 'boolean') this.multiWorkspace.set(settings.multiWorkspace);
 
     await this.loadKnowledgeDocs();
   }
@@ -270,6 +274,19 @@ export class SettingsComponent implements OnInit {
     this.showToast(`Overlay dimensions set to ${clampedW} × ${clampedH}px`, 'success');
   }
 
+  async selectOverlayVersion(version: 'v1' | 'v2'): Promise<void> {
+    this.overlayVersion.set(version);
+    await this.ipcService.setOverlayVersion(version);
+    this.showToast(`Overlay layout set to ${version === 'v2' ? 'Modern HUD (V2)' : 'Classic (V1)'}`, 'success');
+  }
+
+  async toggleMultiWorkspaceSetting(): Promise<void> {
+    const next = !this.multiWorkspace();
+    this.multiWorkspace.set(next);
+    await this.ipcService.setMultiWorkspace(next);
+    this.showToast(next ? 'Multi-Workspace persistence enabled (all spaces)' : 'Single Workspace mode enabled (pinned to space)', 'info');
+  }
+
   async saveSettings(): Promise<void> {
     this.isSaving.set(true);
 
@@ -283,6 +300,8 @@ export class SettingsComponent implements OnInit {
       overlayWidth: this.overlayWidth(),
       overlayHeight: this.overlayHeight(),
       overlayOpacity: this.overlayOpacity(),
+      overlayVersion: this.overlayVersion(),
+      multiWorkspace: this.multiWorkspace(),
       profile: {
         role: this.role(),
         projectSummary: this.projectSummary(),
@@ -327,6 +346,8 @@ export class SettingsComponent implements OnInit {
     this.maxTokens.set(500);
     this.overlayWidth.set(380);
     this.overlayHeight.set(600);
+    this.overlayVersion.set('v1');
+    this.multiWorkspace.set(true);
     this.applyOverlayOpacity(0.88);
     this.showToast('Defaults loaded. Click "Save Changes" to apply.', 'info');
   }

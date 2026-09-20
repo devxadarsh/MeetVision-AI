@@ -96,10 +96,12 @@ export interface AppSettings {
   consentAcceptedAt?: number;
   // Milestone 7: Language & Diarization
   sttLanguage?: 'en' | 'hi' | 'multi';
-  // Overlay Dimensions (Adjustable Length & Width) & Opacity
+  // Overlay Dimensions (Adjustable Length & Width), Opacity, Version & Multi-Workspace
   overlayWidth?: number;
   overlayHeight?: number;
   overlayOpacity?: number;
+  overlayVersion?: 'v1' | 'v2';
+  multiWorkspace?: boolean;
 }
 
 export interface AppDiagnostics {
@@ -136,6 +138,10 @@ export const IPC_CHANNELS = {
   OVERLAY_GET_SIZE: 'overlay:get-size',
   OVERLAY_SET_OPACITY: 'overlay:set-opacity',
   OVERLAY_OPACITY_CHANGED: 'overlay:opacity-changed',
+  OVERLAY_SET_MULTI_WORKSPACE: 'overlay:set-multi-workspace',
+  OVERLAY_MULTI_WORKSPACE_CHANGED: 'overlay:multi-workspace-changed',
+  OVERLAY_SET_VERSION: 'overlay:set-version',
+  OVERLAY_VERSION_CHANGED: 'overlay:version-changed',
   OVERLAY_CLOSE: 'overlay:close',
   HOTKEY_TRIGGERED: 'hotkey:triggered',
   SESSION_START: 'session:start',
@@ -172,6 +178,10 @@ export interface ElectronAPI {
   getOverlaySize: () => Promise<{ width: number; height: number }>;
   setOverlayOpacity: (opacity: number) => Promise<number>;
   onOverlayOpacityChanged: (callback: (opacity: number) => void) => () => void;
+  setMultiWorkspace: (enabled: boolean) => Promise<boolean>;
+  onMultiWorkspaceChanged: (callback: (enabled: boolean) => void) => () => void;
+  setOverlayVersion: (version: 'v1' | 'v2') => Promise<'v1' | 'v2'>;
+  onOverlayVersionChanged: (callback: (version: 'v1' | 'v2') => void) => () => void;
   close: () => Promise<void>;
   onHotkey: (callback: (action: HotkeyAction) => void) => () => void;
   // Session & Audio channels

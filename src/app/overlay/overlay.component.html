@@ -38,43 +38,63 @@
         </div>
       }
 
-      <!-- Draggable Header -->
-      <header class="overlay-header">
-        <div class="header-left">
-          <span
-            class="status-indicator"
-            [class.listening]="isListening()"
-            [title]="isListening() ? 'Actively listening to meeting audio' : 'Audio session paused'"
-          ></span>
-          <div class="title-meta">
-            <span class="app-title">QuestionLens</span>
-            <span class="session-timer">{{ sessionTimeFormatted() }}</span>
+      <!-- ============================================================
+           V1 (CLASSIC) OR V2 (MODERN HUD) SWITCHABLE LAYOUT
+           ============================================================ -->
+      @if (overlayVersion() === 'v1') {
+        <!-- Draggable Header (V1 Classic) -->
+        <header class="overlay-header">
+          <div class="header-left">
+            <span
+              class="status-indicator"
+              [class.listening]="isListening()"
+              [title]="isListening() ? 'Actively listening to meeting audio' : 'Audio session paused'"
+            ></span>
+            <div class="title-meta">
+              <span class="app-title">QuestionLens</span>
+              <span class="session-timer">{{ sessionTimeFormatted() }}</span>
+            </div>
           </div>
-        </div>
 
-        <div class="header-right">
-          <!-- Answer Mode Selector -->
-          <button
-            type="button"
-            class="chip mode-chip"
-            (click)="cycleAnswerMode()"
-            (mouseenter)="showTooltip($event, 'Current Mode: ' + selectedMode() + ' (click to cycle)')"
-            (mouseleave)="hideTooltip()"
-          >
-            {{ selectedMode() }}
-          </button>
+          <div class="header-right">
+            <!-- Answer Mode Selector -->
+            <button
+              type="button"
+              class="chip mode-chip"
+              (click)="cycleAnswerMode()"
+              (mouseenter)="showTooltip($event, 'Current Mode: ' + selectedMode() + ' (click to cycle)')"
+              (mouseleave)="hideTooltip()"
+            >
+              {{ selectedMode() }}
+            </button>
 
-          <!-- Settings Button (Toggle) -->
-          <button
-            type="button"
-            class="chip settings-chip"
-            [class.active]="isSettingsOpen()"
-            (click)="openSettings()"
-            (mouseenter)="showTooltip($event, isSettingsOpen() ? 'Close Settings' : 'Open Preferences & Context Profile')"
-            (mouseleave)="hideTooltip()"
-          >
-            ⚙
-          </button>
+            <!-- Workspace Persistence Toggle (All Workspaces vs Single Workspace) -->
+            <button
+              type="button"
+              class="chip workspace-chip"
+              [class.active]="multiWorkspace()"
+              (click)="toggleMultiWorkspace()"
+              (mouseenter)="showTooltip($event, multiWorkspace() ? 'Multi-Workspace: Visible on all desktop spaces (click for single space)' : 'Single Workspace: Pinned to current desktop space (click for all spaces)')"
+              (mouseleave)="hideTooltip()"
+            >
+              @if (multiWorkspace()) {
+                🌐 All Spaces
+              } @else {
+                🖥️ This Space
+              }
+            </button>
+
+            <!-- Settings Button (Toggle) -->
+            <button
+              type="button"
+              class="chip settings-chip"
+              [class.active]="isSettingsOpen()"
+              (click)="openSettings()"
+              (mouseenter)="showTooltip($event, isSettingsOpen() ? 'Close Settings' : 'Open Preferences & Context Profile')"
+              (mouseleave)="hideTooltip()"
+            >
+              ⚙
+            </button>
 
           <!-- Click-through indicator / toggle -->
           <button
@@ -510,6 +530,454 @@
           </button>
         </div>
       </footer>
+    } @else {
+        <!-- ============================================================
+             V2 (MODERN HUD) OVERLAY LAYOUT
+             ============================================================ -->
+        <header class="v2-header">
+          <!-- Top HUD row -->
+          <div class="v2-header-top">
+            <div class="v2-brand">
+              <div
+                class="v2-live-orb"
+                [class.listening]="isListening()"
+                [title]="isListening() ? 'Actively capturing meeting speech' : 'Microphone paused'"
+              >
+                <span class="v2-orb-core"></span>
+              </div>
+              <div class="v2-brand-info">
+                <span class="v2-app-name">QuestionLens</span>
+                <span class="v2-hud-badge">HUD</span>
+              </div>
+              <span class="v2-session-timer">{{ sessionTimeFormatted() }}</span>
+            </div>
+
+            <div class="v2-header-controls">
+              <!-- Answer Mode Selector -->
+              <button
+                type="button"
+                class="v2-pill-btn mode-pill"
+                (click)="cycleAnswerMode()"
+                (mouseenter)="showTooltip($event, 'Answer Tone: ' + selectedMode() + ' (click to cycle)')"
+                (mouseleave)="hideTooltip()"
+              >
+                ⚡ {{ selectedMode() }}
+              </button>
+
+              <!-- Workspace Persistence Toggle (All Workspaces vs Single Workspace) -->
+              <button
+                type="button"
+                class="v2-pill-btn workspace-pill"
+                [class.active]="multiWorkspace()"
+                (click)="toggleMultiWorkspace()"
+                (mouseenter)="showTooltip($event, multiWorkspace() ? 'Multi-Workspace: Visible on all desktop spaces (click for single space)' : 'Single Workspace: Pinned to current desktop space (click for all spaces)')"
+                (mouseleave)="hideTooltip()"
+              >
+                @if (multiWorkspace()) {
+                  🌐 All Spaces
+                } @else {
+                  🖥️ This Space
+                }
+              </button>
+
+              <!-- Settings Button (Toggle) -->
+              <button
+                type="button"
+                class="v2-pill-btn icon-pill settings-pill"
+                [class.active]="isSettingsOpen()"
+                (click)="openSettings()"
+                (mouseenter)="showTooltip($event, isSettingsOpen() ? 'Close Settings' : 'Open Preferences & Context Profile')"
+                (mouseleave)="hideTooltip()"
+              >
+                ⚙
+              </button>
+
+              <!-- Click-through indicator / toggle -->
+              <button
+                type="button"
+                class="v2-pill-btn click-pill"
+                [class.active]="clickThroughActive()"
+                (click)="toggleClickThrough()"
+                (mouseenter)="showTooltip($event, clickThroughActive() ? 'Click-through ON (⌘⇧M)' : 'Enable Click-through')"
+                (mouseleave)="hideTooltip()"
+              >
+                {{ clickThroughActive() ? '⚡ Passthrough' : '🖱 Interactive' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Bottom View Tabs & Action Bar -->
+          <div class="v2-nav-bar">
+            <div class="v2-tabs-segment">
+              <button
+                type="button"
+                class="v2-tab-segment"
+                [class.active]="currentTab() === 'questions'"
+                (click)="currentTab.set('questions')"
+              >
+                <span>Questions</span>
+                <span class="v2-tab-count">{{ questions().length }}</span>
+              </button>
+
+              <button
+                type="button"
+                class="v2-tab-segment"
+                [class.active]="currentTab() === 'transcript'"
+                (click)="currentTab.set('transcript')"
+              >
+                <span
+                  class="v2-wave-dot"
+                  [style.opacity]="0.4 + audioLevel() * 0.6"
+                  [class.active]="audioLevel() > 0.05"
+                ></span>
+                <span>Live Stream</span>
+              </button>
+
+              <button
+                type="button"
+                class="v2-tab-segment"
+                [class.active]="currentTab() === 'summary'"
+                (click)="loadOrGenerateSummary()"
+              >
+                <span>Summary</span>
+              </button>
+            </div>
+
+            <div class="v2-nav-actions">
+              @if (currentTab() === 'questions') {
+                <button
+                  type="button"
+                  class="v2-action-tool primary"
+                  (click)="simulateNewQuestion()"
+                  (mouseenter)="showTooltip($event, 'Simulate incoming spoken question')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  + Question
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon"
+                  (click)="toggleCollapseAll()"
+                  (mouseenter)="showTooltip($event, allCollapsed() ? 'Expand all' : 'Collapse all')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  {{ allCollapsed() ? '⤢' : '⤡' }}
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon danger"
+                  (click)="clearUnpinnedQuestions()"
+                  (mouseenter)="showTooltip($event, 'Clear unpinned questions (⌘⇧C)')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  🗑
+                </button>
+              } @else if (currentTab() === 'transcript') {
+                <button
+                  type="button"
+                  class="v2-action-tool"
+                  [class.primary]="!isListening()"
+                  (click)="toggleSessionListening()"
+                  (mouseenter)="showTooltip($event, isListening() ? 'Pause live audio' : 'Resume live audio')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  {{ isListening() ? '⏸ Pause' : '▶ Start' }}
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon danger"
+                  (click)="clearTranscript()"
+                  (mouseenter)="showTooltip($event, 'Clear transcript')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  🗑
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="v2-action-tool primary"
+                  (click)="exportMeetingSummary()"
+                  [disabled]="isExportingSummary() || !meetingSummary()"
+                  (mouseenter)="showTooltip($event, 'Save summary as Markdown file')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  📥 Export
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon"
+                  (click)="copySummaryMarkdown()"
+                  [disabled]="!meetingSummary()"
+                  (mouseenter)="showTooltip($event, 'Copy summary markdown to clipboard')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  📋
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon"
+                  (click)="generateMeetingSummary()"
+                  [disabled]="isGeneratingSummary()"
+                  (mouseenter)="showTooltip($event, 'Regenerate summary with latest context')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  🔄
+                </button>
+              }
+            </div>
+          </div>
+        </header>
+
+        <!-- Main V2 Content Area -->
+        @if (currentTab() === 'questions') {
+          <main class="v2-feed-container">
+            @if (questions().length === 0) {
+              <div class="v2-empty-hero">
+                <div class="v2-empty-glyph">🎙️</div>
+                <div class="v2-empty-heading">Meeting Radar Active</div>
+                <p class="v2-empty-desc">
+                  QuestionLens is actively monitoring audio. Spoken questions will trigger synthesized talking points automatically.
+                </p>
+                <button
+                  type="button"
+                  class="v2-empty-cta"
+                  (click)="simulateNewQuestion()"
+                >
+                  Simulate Question Card
+                </button>
+              </div>
+            } @else {
+              @for (q of sortedQuestions(); track q.id) {
+                <article
+                  class="v2-card"
+                  [class.pinned]="q.status === 'pinned'"
+                  [class.answering]="q.status === 'answering'"
+                  [class.collapsed]="isCollapsed(q.id)"
+                >
+                  <!-- Card Header Bar -->
+                  <div class="v2-card-head" (click)="toggleCollapse(q.id)">
+                    <div class="v2-card-left-meta">
+                      <span class="v2-status-chip" [class]="'status-' + q.status">
+                        <span class="v2-status-dot"></span>
+                        {{ q.status }}
+                      </span>
+                      @if (q.speaker) {
+                        <span class="v2-speaker-tag">🎙️ {{ q.speaker }}</span>
+                      }
+                      <span class="v2-timestamp">{{ formatRelativeTime(q.askedAt) }}</span>
+                    </div>
+
+                    <div class="v2-card-buttons" (click)="$event.stopPropagation()">
+                      <button
+                        type="button"
+                        class="v2-card-btn"
+                        [class.active]="q.status === 'pinned'"
+                        (click)="togglePin(q.id)"
+                        (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin' : 'Pin question (⌘⇧P)')"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        📌
+                      </button>
+                      <button
+                        type="button"
+                        class="v2-card-btn"
+                        (click)="regenerateAnswer(q)"
+                        (mouseenter)="showTooltip($event, 'Regenerate points (⌘⇧R)')"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        🔄
+                      </button>
+                      <button
+                        type="button"
+                        class="v2-card-btn"
+                        (click)="copyAnswer(q)"
+                        (mouseenter)="showTooltip($event, 'Copy points (⌘⇧Y)')"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        📋
+                      </button>
+                      <button
+                        type="button"
+                        class="v2-card-btn close-btn"
+                        (click)="dismissQuestion(q.id)"
+                        (mouseenter)="showTooltip($event, 'Dismiss question')"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Question Text -->
+                  <h3 class="v2-question-title" (click)="toggleCollapse(q.id)">
+                    {{ q.text }}
+                  </h3>
+
+                  <!-- Answer Accordion -->
+                  @if (!isCollapsed(q.id) && q.answer) {
+                    <div class="v2-answer-container">
+                      <div class="v2-answer-top-bar">
+                        <span class="v2-talking-label">TALKING POINTS</span>
+                        <span class="v2-tone-tag">{{ q.answer.mode }}</span>
+                      </div>
+
+                      <ul class="v2-bullet-list">
+                        @for (bullet of q.answer.bullets; track $index) {
+                          <li class="v2-bullet-item">
+                            <span class="v2-bullet-arrow">▸</span>
+                            <span class="v2-bullet-body">{{ bullet }}</span>
+                          </li>
+                        }
+                        @if (q.status === 'answering') {
+                          <li class="v2-bullet-item streaming">
+                            <span class="v2-bullet-arrow pulse">▸</span>
+                            <span class="v2-bullet-body stream-text">Synthesizing live talking points...</span>
+                          </li>
+                        }
+                      </ul>
+
+                      @if (q.answer.code) {
+                        <div class="v2-code-container">
+                          <div class="v2-code-label">Example Snippet</div>
+                          <pre><code>{{ q.answer.code }}</code></pre>
+                        </div>
+                      }
+                    </div>
+                  }
+                </article>
+              }
+            }
+          </main>
+        } @else if (currentTab() === 'transcript') {
+          <main class="v2-transcript-container" #transcriptContainer>
+            <!-- Audio Health Bar -->
+            <div class="v2-audio-health-bar">
+              <div class="v2-health-info">
+                <span class="v2-audio-status-label">AUDIO STREAM</span>
+                <span class="v2-provider-badge">{{ sttProvider() }}</span>
+              </div>
+              <div class="v2-volume-track">
+                <div class="v2-volume-fill" [style.width.%]="audioLevel() * 100"></div>
+              </div>
+            </div>
+
+            <div class="v2-transcript-body">
+              @if (transcriptSegments().length === 0 && !activeInterim()) {
+                <div class="v2-empty-hero">
+                  <div class="v2-empty-glyph">🎙️</div>
+                  <div class="v2-empty-heading">Waiting for Audio...</div>
+                  <p class="v2-empty-desc">
+                    System loopback audio streams here with real-time speaker diarization and language detection.
+                  </p>
+                </div>
+              } @else {
+                <div class="v2-segment-stream">
+                  @for (seg of transcriptSegments(); track seg.id) {
+                    <div class="v2-stream-item final">
+                      <span class="v2-seg-time">{{ formatSegmentTime(seg.startMs) }}</span>
+                      @if (seg.speaker) {
+                        <span class="v2-seg-speaker">{{ seg.speaker }}:</span>
+                      }
+                      <span class="v2-seg-body">{{ seg.text }}</span>
+                    </div>
+                  }
+                  @if (activeInterim()) {
+                    <div class="v2-stream-item live">
+                      <span class="v2-live-tag">LIVE</span>
+                      @if (activeInterim()!.speaker) {
+                        <span class="v2-seg-speaker">{{ activeInterim()!.speaker }}:</span>
+                      }
+                      <span class="v2-interim-body">{{ activeInterim()!.text }}</span>
+                      <span class="v2-cursor-caret">▋</span>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </main>
+        } @else {
+          <main class="v2-summary-container">
+            @if (isGeneratingSummary()) {
+              <div class="v2-summary-generating">
+                <div class="v2-spin-ring"></div>
+                <div class="v2-spin-text">Synthesizing executive summary & action items...</div>
+              </div>
+            } @else if (meetingSummary(); as sum) {
+              <div class="v2-summary-content">
+                <div class="v2-summary-header-card">
+                  <h2 class="v2-sum-title">{{ sum.title }}</h2>
+                  <span class="v2-sum-timestamp">Generated {{ formatRelativeTime(sum.generatedAt) }}</span>
+                </div>
+
+                <div class="v2-summary-card">
+                  <h4 class="v2-card-heading">📌 EXECUTIVE OVERVIEW</h4>
+                  <p class="v2-overview-body">{{ sum.overview }}</p>
+                </div>
+
+                <div class="v2-summary-card">
+                  <h4 class="v2-card-heading">✅ ACTION ITEMS ({{ sum.actionItems.length }})</h4>
+                  <div class="v2-tasks-wrapper">
+                    @for (act of sum.actionItems; track act.id) {
+                      <div class="v2-task-row">
+                        <input type="checkbox" class="v2-task-checkbox" />
+                        <div class="v2-task-info">
+                          <span class="v2-task-text">{{ act.task }}</span>
+                          @if (act.owner || act.dueDate) {
+                            <div class="v2-task-chips">
+                              @if (act.owner) {
+                                <span class="v2-chip-owner">👤 {{ act.owner }}</span>
+                              }
+                              @if (act.dueDate) {
+                                <span class="v2-chip-due">📅 {{ act.dueDate }}</span>
+                              }
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+              </div>
+            } @else {
+              <div class="v2-empty-hero">
+                <div class="v2-empty-glyph">📝</div>
+                <div class="v2-empty-heading">No Briefing Generated</div>
+                <p class="v2-empty-desc">
+                  Condense transcript discussions, talking points, and action items into a clean markdown executive briefing.
+                </p>
+                <button
+                  type="button"
+                  class="v2-empty-cta"
+                  (click)="generateMeetingSummary()"
+                >
+                  Generate Executive Summary
+                </button>
+              </div>
+            }
+          </main>
+        }
+
+        <!-- V2 HUD Footer -->
+        <footer class="v2-footer">
+          <div class="v2-footer-left">
+            <span class="v2-footer-dot"></span>
+            <span class="v2-footer-status">
+              @if (currentTab() === 'questions') {
+                {{ questions().length }} questions detected
+              } @else if (currentTab() === 'transcript') {
+                {{ transcriptSegments().length }} segments logged
+              } @else {
+                {{ meetingSummary()?.actionItems?.length || 0 }} tasks identified
+              }
+            </span>
+          </div>
+          <div class="v2-footer-right">
+            <span class="v2-footer-shortcut"><kbd>⌘⇧H</kbd> Hide</span>
+            <span class="v2-footer-shortcut"><kbd>⌘⇧M</kbd> Passthrough</span>
+            <span class="v2-footer-shortcut"><kbd>⌘⇧C</kbd> Clear</span>
+          </div>
+        </footer>
+      }
 
       <!-- Bottom-Right Resize Grip Handle -->
       <div

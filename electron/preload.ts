@@ -42,6 +42,30 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, handler);
     };
   },
+  setMultiWorkspace: (enabled: boolean): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_MULTI_WORKSPACE, enabled);
+  },
+  onMultiWorkspaceChanged: (callback: (enabled: boolean) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, enabled: boolean) => {
+      callback(enabled);
+    };
+    ipcRenderer.on(IPC_CHANNELS.OVERLAY_MULTI_WORKSPACE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY_MULTI_WORKSPACE_CHANGED, handler);
+    };
+  },
+  setOverlayVersion: (version: 'v1' | 'v2'): Promise<'v1' | 'v2'> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_VERSION, version);
+  },
+  onOverlayVersionChanged: (callback: (version: 'v1' | 'v2') => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, version: 'v1' | 'v2') => {
+      callback(version);
+    };
+    ipcRenderer.on(IPC_CHANNELS.OVERLAY_VERSION_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY_VERSION_CHANGED, handler);
+    };
+  },
   close: (): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_CLOSE);
   },

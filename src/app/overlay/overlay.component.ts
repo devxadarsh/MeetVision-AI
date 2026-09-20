@@ -103,6 +103,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly showConsentModal = signal(false);
   readonly overlayOpacity = signal<number>(0.88);
   readonly isSettingsOpen = signal(false);
+  readonly overlayVersion = signal<'v1' | 'v2'>('v1');
+  readonly multiWorkspace = signal<boolean>(true);
 
   // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
   readonly currentTab = signal<'questions' | 'transcript' | 'summary'>('questions');
@@ -144,16 +146,22 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return list.every((q) => collapsed.has(q.id));
   });
 
-  readonly sessionTimeFormatted = computed(() => {
-    const total = this.sessionSeconds();
-    const mins = Math.floor(total / 60)
-      .toString()
-      .padStart(2, '0');
-    const secs = (total % 60).toString().padStart(2, '0');
-    return `${mins}:${secs}`;
+  // Telemetry Teleprompter Metrics (Milestone 5)
+  readonly wordCount = computed(() => {
+    return this.transcriptSegments().reduce(
+      (acc, s) => acc + s.text.trim().split(/\s+/).filter(Boolean).length,
+      0
+    );
   });
 
-  private timerInterval?: ReturnType<typeof setInterval>;
+  readonly sessionTimeFormatted = computed(() => {
+    const totalSec = this.sessionSeconds();
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  });
+
+  private timerInterval: any = null;
   private unsubscribeHotkey?: () => void;
   private unsubscribeAudioLevel?: () => void;
   private unsubscribeTranscript?: () => void;
@@ -161,11 +169,17 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeAnswerChunk?: () => void;
   private unsubscribeOverlayOpacity?: () => void;
   private unsubscribeSettingsVisibility?: () => void;
+  private unsubscribeOverlayVersion?: () => void;
+  private unsubscribeMultiWorkspace?: () => void;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
 
   ngOnInit(): void {
+    const savedVer = localStorage.getItem('ql_overlay_version');
+    if (savedVer === 'v1' || savedVer === 'v2') {
+      this.overlayVersion.set(savedVer);
+    }
     this.seedInitialQuestions();
     this.setupSessionTimer();
     this.setupIpcListeners();
@@ -179,6 +193,12 @@ export class OverlayComponent implements OnInit, OnDestroy {
       const settings = await this.ipcService.getSettings();
       if (typeof settings.overlayOpacity === 'number') {
         this.overlayOpacity.set(settings.overlayOpacity);
+      }
+      if (settings.overlayVersion) {
+        this.overlayVersion.set(settings.overlayVersion);
+      }
+      if (typeof settings.multiWorkspace === 'boolean') {
+        this.multiWorkspace.set(settings.multiWorkspace);
       }
       if (!settings.hasAcceptedConsent) {
         this.showConsentModal.set(true);
@@ -211,6 +231,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (this.unsubscribeAnswerChunk) this.unsubscribeAnswerChunk();
     if (this.unsubscribeOverlayOpacity) this.unsubscribeOverlayOpacity();
     if (this.unsubscribeSettingsVisibility) this.unsubscribeSettingsVisibility();
+    if (this.unsubscribeOverlayVersion) this.unsubscribeOverlayVersion();
+    if (this.unsubscribeMultiWorkspace) this.unsubscribeMultiWorkspace();
   }
 
   private seedInitialQuestions(): void {
@@ -297,6 +319,17 @@ export class OverlayComponent implements OnInit, OnDestroy {
     // Settings Window Visibility (Toggle State)
     this.unsubscribeSettingsVisibility = this.ipcService.onSettingsVisibilityChanged((isOpen: boolean) => {
       this.isSettingsOpen.set(isOpen);
+    });
+
+    // Reactive Overlay Layout Version (live updates from Settings)
+    this.unsubscribeOverlayVersion = this.ipcService.onOverlayVersionChanged((ver: 'v1' | 'v2') => {
+      this.overlayVersion.set(ver);
+      this.showToast(`Layout updated: ${ver === 'v2' ? 'Modern HUD (V2)' : 'Classic (V1)'}`);
+    });
+
+    // Reactive Multi-Workspace Persistence (live updates)
+    this.unsubscribeMultiWorkspace = this.ipcService.onMultiWorkspaceChanged((enabled: boolean) => {
+      this.multiWorkspace.set(enabled);
     });
 
     // Real-time Audio Level Meter (Milestone 2)
@@ -522,6 +555,24 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (typeof isOpen === 'boolean') {
       this.isSettingsOpen.set(isOpen);
     }
+  }
+
+  toggleOverlayVersion(): void {
+    const next = this.overlayVersion() === 'v1' ? 'v2' : 'v1';
+    this.overlayVersion.set(next);
+    localStorage.setItem('ql_overlay_version', next);
+    this.showToast(`Switched to ${next === 'v2' ? 'New V2' : 'Classic V1'} Layout`);
+  }
+
+  async toggleMultiWorkspace(): Promise<void> {
+    const nextVal = !this.multiWorkspace();
+    this.multiWorkspace.set(nextVal);
+    await this.ipcService.setMultiWorkspace(nextVal);
+    this.showToast(
+      nextVal
+        ? 'Multi-Workspace: Visible across all spaces'
+        : 'Single Workspace: Pinned to this space'
+    );
   }
 
   async toggleClickThrough(): Promise<void> {

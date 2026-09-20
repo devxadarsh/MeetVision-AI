@@ -1112,6 +1112,33 @@
     font-size: 8px;
     color: #64748b;
   }
+
+  &.v2-mockup {
+    border-color: rgba(56, 189, 248, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 10px rgba(56, 189, 248, 0.15);
+
+    .mini-status-dot.v2-dot {
+      background: #06b6d4;
+      box-shadow: 0 0 6px #06b6d4;
+    }
+
+    .mini-hud-tag {
+      font-size: 7.5px;
+      font-weight: 800;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 0 3px;
+      border-radius: 2px;
+      margin-left: 2px;
+    }
+
+    .mini-question-box.v2-qbox {
+      border-color: rgba(56, 189, 248, 0.2);
+      border-left: 2px solid #38bdf8;
+      background: rgba(15, 23, 42, 0.6);
+    }
+  }
 }
 
 /* Compact Control Cards */
@@ -1441,6 +1468,139 @@
     @media (max-width: 560px) {
       width: 100%;
       text-align: center;
+    }
+  }
+}
+
+/* Overlay Version Selection (V1 vs V2) */
+.version-selection-card {
+  .active-mode-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: #93c5fd;
+
+    &.v2 {
+      background: rgba(168, 85, 247, 0.15);
+      border-color: rgba(168, 85, 247, 0.4);
+      color: #d8b4fe;
+    }
+  }
+
+  .version-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 4px;
+
+    @container sizingPanel (max-width: 500px) {
+      grid-template-columns: 1fr;
+    }
+
+    @media (max-width: 650px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .version-card-option {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    &.selected {
+      background: rgba(30, 41, 59, 0.8);
+      border-color: #38bdf8;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.15);
+
+      .version-radio-dot {
+        border-color: #38bdf8;
+        background: #38bdf8;
+        box-shadow: 0 0 8px #38bdf8;
+      }
+
+      .version-name {
+        color: #38bdf8;
+      }
+    }
+
+    .version-option-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+
+      .version-title-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .version-radio-dot {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          transition: all 0.15s ease;
+          flex-shrink: 0;
+        }
+
+        .version-name {
+          font-size: 13px;
+          color: #f1f5f9;
+        }
+      }
+
+      .version-tag {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+
+        &.classic {
+          background: rgba(100, 116, 139, 0.2);
+          border: 1px solid rgba(100, 116, 139, 0.3);
+          color: #94a3b8;
+        }
+
+        &.modern {
+          background: rgba(168, 85, 247, 0.15);
+          border: 1px solid rgba(168, 85, 247, 0.35);
+          color: #c084fc;
+        }
+      }
+    }
+
+    .version-desc {
+      margin: 0 0 10px;
+      font-size: 11.5px;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+
+    .version-features {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 10.5px;
+      color: #64748b;
+
+      span {
+        display: flex;
+        align-items: center;
+      }
     }
   }
 }

@@ -89,6 +89,32 @@ export class IpcService {
     return this.api.onOverlayOpacityChanged(callback);
   }
 
+  async setMultiWorkspace(enabled: boolean): Promise<boolean> {
+    if (!this.api) {
+      localStorage.setItem('ql_multi_workspace', String(enabled));
+      return enabled;
+    }
+    return this.api.setMultiWorkspace(enabled);
+  }
+
+  onMultiWorkspaceChanged(callback: (enabled: boolean) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onMultiWorkspaceChanged(callback);
+  }
+
+  async setOverlayVersion(version: 'v1' | 'v2'): Promise<'v1' | 'v2'> {
+    if (!this.api) {
+      localStorage.setItem('ql_overlay_version', version);
+      return version;
+    }
+    return this.api.setOverlayVersion(version);
+  }
+
+  onOverlayVersionChanged(callback: (version: 'v1' | 'v2') => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onOverlayVersionChanged(callback);
+  }
+
   async close(): Promise<void> {
     if (!this.api) return;
     return this.api.close();

@@ -82,7 +82,22 @@ function createOverlayWindow(): void {
   });
 
   // Always on top at screen-saver level so it floats over fullscreen / presentation apps
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+
+  const initialSettings = storeService.getSettings();
+  if (process.platform === 'darwin' && initialSettings.multiWorkspace !== false) {
+    mainWindow.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
+  }
+
+  // Ensure window stays on top when user switches focus to other applications
+  mainWindow.on('blur', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+    }
+  });
 
   try {
     mainWindow.setContentProtection(true);
@@ -403,6 +418,30 @@ function registerIpcHandlers(): void {
     return clamped;
   });
 
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_SET_MULTI_WORKSPACE, async (_event, enabled: boolean) => {
+    const isMulti = Boolean(enabled);
+    storeService.setMultiWorkspace(isMulti);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (process.platform === 'darwin') {
+        mainWindow.setVisibleOnAllWorkspaces(isMulti, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true,
+        });
+      }
+      mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_MULTI_WORKSPACE_CHANGED, isMulti);
+    }
+    return isMulti;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_SET_VERSION, async (_event, version: 'v1' | 'v2') => {
+    const ver = version === 'v2' ? 'v2' : 'v1';
+    storeService.setOverlayVersion(ver);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_VERSION_CHANGED, ver);
+    }
+    return ver;
+  });
+
   ipcMain.handle(IPC_CHANNELS.OVERLAY_CLOSE, async () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.close();
@@ -489,8 +528,22 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
     const updated = storeService.updateSettings(newSettings);
-    if (mainWindow && !mainWindow.isDestroyed() && typeof updated.overlayOpacity === 'number') {
-      mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, updated.overlayOpacity);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (typeof updated.overlayOpacity === 'number') {
+        mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, updated.overlayOpacity);
+      }
+      if (updated.overlayVersion) {
+        mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_VERSION_CHANGED, updated.overlayVersion);
+      }
+      if (typeof updated.multiWorkspace === 'boolean') {
+        mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_MULTI_WORKSPACE_CHANGED, updated.multiWorkspace);
+        if (process.platform === 'darwin') {
+          mainWindow.setVisibleOnAllWorkspaces(updated.multiWorkspace, {
+            visibleOnFullScreen: true,
+            skipTransformProcessType: true,
+          });
+        }
+      }
     }
     return updated;
   });

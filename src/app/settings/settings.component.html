@@ -350,12 +350,13 @@
             <div>
               <h2>Overlay Appearance & Sizing</h2>
               <p>
-                Configure window dimensions and background acrylic transparency.
+                Configure layout theme, window dimensions, and acrylic background transparency.
               </p>
             </div>
             <div class="header-specs">
+              <span class="spec-pill highlight">{{ overlayVersion() === 'v2' ? '✨ Modern HUD (V2)' : '⚡ Classic (V1)' }}</span>
               <span class="spec-pill">{{ overlayWidth() }} × {{ overlayHeight() }} px</span>
-              <span class="spec-pill highlight">{{ opacityPercent() }}% Opacity</span>
+              <span class="spec-pill">{{ opacityPercent() }}% Opacity</span>
             </div>
           </div>
         </div>
@@ -369,7 +370,7 @@
                 <span class="stage-dot"></span> Live Overlay Preview
               </div>
               <div class="stage-stats">
-                {{ overlayWidth() }}×{{ overlayHeight() }} • {{ opacityPercent() }}%
+                {{ overlayVersion() === 'v2' ? 'V2 HUD' : 'V1' }} • {{ overlayWidth() }}×{{ overlayHeight() }} • {{ opacityPercent() }}%
               </div>
             </div>
 
@@ -394,18 +395,22 @@
               <!-- Mini Overlay Representation with Live Dynamic Dimensions & Transparency -->
               <div
                 class="mini-overlay-mockup"
+                [class.v2-mockup]="overlayVersion() === 'v2'"
                 [style.width.px]="previewWidth()"
                 [style.minHeight.px]="previewHeight()"
                 [style.background]="'rgba(18, 20, 26, ' + overlayOpacity() + ')'"
               >
                 <div class="mini-overlay-header">
                   <div class="mini-header-left">
-                    <span class="mini-status-dot"></span>
+                    <span class="mini-status-dot" [class.v2-dot]="overlayVersion() === 'v2'"></span>
                     <span class="mini-title">QuestionLens</span>
+                    @if (overlayVersion() === 'v2') {
+                      <span class="mini-hud-tag">HUD</span>
+                    }
                   </div>
-                  <span class="mini-chip">Short</span>
+                  <span class="mini-chip">{{ overlayVersion() === 'v2' ? '✨ V2' : 'Short' }}</span>
                 </div>
-                <div class="mini-question-box">
+                <div class="mini-question-box" [class.v2-qbox]="overlayVersion() === 'v2'">
                   <div class="mini-q-title">Q: Retry logic in payments?</div>
                   <div class="mini-bullet">• 3 retries with jittered backoff</div>
                 </div>
@@ -480,6 +485,70 @@
                 Solid 98%
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Overlay Layout Version Selection (V1 vs V2) -->
+        <div class="control-card compact-card version-selection-card">
+          <div class="card-header compact-mb">
+            <div class="card-title-group">
+              <span class="card-icon">⚡</span>
+              <div>
+                <h3 class="card-title">Overlay Layout Mode</h3>
+                <p class="card-subtitle">Select between Classic compact cards and the next-generation Modern HUD</p>
+              </div>
+            </div>
+            <span class="active-mode-badge" [class.v2]="overlayVersion() === 'v2'">
+              {{ overlayVersion() === 'v2' ? '✨ Modern HUD Active' : '⚡ Classic Mode Active' }}
+            </span>
+          </div>
+
+          <div class="version-cards-grid">
+            <button
+              type="button"
+              class="version-card-option"
+              [class.selected]="overlayVersion() === 'v1'"
+              (click)="selectOverlayVersion('v1')"
+            >
+              <div class="version-option-header">
+                <div class="version-title-wrap">
+                  <span class="version-radio-dot"></span>
+                  <strong class="version-name">Classic Mode (V1)</strong>
+                </div>
+                <span class="version-tag classic">Minimalist</span>
+              </div>
+              <p class="version-desc">
+                Clean, distraction-free floating card layout with subtle borders and classic top bar controls.
+              </p>
+              <div class="version-features">
+                <span>✓ Compact header</span>
+                <span>✓ Tabbed navigation</span>
+                <span>✓ Low visual weight</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="version-card-option"
+              [class.selected]="overlayVersion() === 'v2'"
+              (click)="selectOverlayVersion('v2')"
+            >
+              <div class="version-option-header">
+                <div class="version-title-wrap">
+                  <span class="version-radio-dot"></span>
+                  <strong class="version-name">Modern HUD (V2)</strong>
+                </div>
+                <span class="version-tag modern">Cyber HUD</span>
+              </div>
+              <p class="version-desc">
+                High-tech glassmorphic HUD with pulsating live audio orb, glowing borders, and segmented navigation bar.
+              </p>
+              <div class="version-features">
+                <span>✓ Pulsing live orb</span>
+                <span>✓ Segmented nav & counters</span>
+                <span>✓ Talking points accordion</span>
+              </div>
+            </button>
           </div>
         </div>
 

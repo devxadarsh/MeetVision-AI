@@ -18,6 +18,8 @@ interface StoredConfigFile {
   overlayWidth?: number;
   overlayHeight?: number;
   overlayOpacity?: number;
+  overlayVersion?: 'v1' | 'v2';
+  multiWorkspace?: boolean;
 }
 
 const DEFAULT_PROFILE: ContextProfile = {
@@ -35,6 +37,8 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   temperature: 0.3,
   maxTokens: 500,
   overlayOpacity: 0.88,
+  overlayVersion: 'v1',
+  multiWorkspace: true,
   profile: DEFAULT_PROFILE,
 };
 
@@ -143,6 +147,8 @@ export class StoreService {
       overlayWidth: this.data.overlayWidth,
       overlayHeight: this.data.overlayHeight,
       overlayOpacity: typeof this.data.overlayOpacity === 'number' ? this.data.overlayOpacity : 0.88,
+      overlayVersion: this.data.overlayVersion || 'v1',
+      multiWorkspace: typeof this.data.multiWorkspace === 'boolean' ? this.data.multiWorkspace : true,
     };
   }
 
@@ -165,6 +171,18 @@ export class StoreService {
     } catch (err) {
       console.warn('[StoreService] Failed to unlink settings file during purge:', err);
     }
+  }
+
+  setOverlayVersion(version: 'v1' | 'v2'): 'v1' | 'v2' {
+    this.data.overlayVersion = version;
+    this.saveToDisk();
+    return this.data.overlayVersion;
+  }
+
+  setMultiWorkspace(enabled: boolean): boolean {
+    this.data.multiWorkspace = enabled;
+    this.saveToDisk();
+    return this.data.multiWorkspace;
   }
 
   updateSettings(newSettings: AppSettings): AppSettings {
@@ -193,6 +211,8 @@ export class StoreService {
     if (typeof newSettings.overlayWidth === 'number') this.data.overlayWidth = newSettings.overlayWidth;
     if (typeof newSettings.overlayHeight === 'number') this.data.overlayHeight = newSettings.overlayHeight;
     if (typeof newSettings.overlayOpacity === 'number') this.data.overlayOpacity = newSettings.overlayOpacity;
+    if (newSettings.overlayVersion) this.data.overlayVersion = newSettings.overlayVersion;
+    if (typeof newSettings.multiWorkspace === 'boolean') this.data.multiWorkspace = newSettings.multiWorkspace;
 
     if (newSettings.profile) {
       this.data.profile = {
