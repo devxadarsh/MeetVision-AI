@@ -30,6 +30,18 @@ const api: ElectronAPI = {
   getOverlaySize: (): Promise<{ width: number; height: number }> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_GET_SIZE);
   },
+  setOverlayOpacity: (opacity: number): Promise<number> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_SET_OPACITY, opacity);
+  },
+  onOverlayOpacityChanged: (callback: (opacity: number) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, opacity: number) => {
+      callback(opacity);
+    };
+    ipcRenderer.on(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, handler);
+    };
+  },
   close: (): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OVERLAY_CLOSE);
   },
@@ -116,8 +128,17 @@ const api: ElectronAPI = {
   setSettings: (settings: AppSettings): Promise<AppSettings> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, settings);
   },
-  openSettings: (): Promise<void> => {
+  openSettings: (): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_OPEN);
+  },
+  onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, isOpen: boolean) => {
+      callback(isOpen);
+    };
+    ipcRenderer.on(IPC_CHANNELS.SETTINGS_VISIBILITY_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SETTINGS_VISIBILITY_CHANGED, handler);
+    };
   },
   // Milestone 6: Consent & Data Purge
   acceptConsent: (): Promise<void> => {

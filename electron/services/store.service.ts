@@ -17,6 +17,7 @@ interface StoredConfigFile {
   sttLanguage?: 'en' | 'hi' | 'multi';
   overlayWidth?: number;
   overlayHeight?: number;
+  overlayOpacity?: number;
 }
 
 const DEFAULT_PROFILE: ContextProfile = {
@@ -33,6 +34,7 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   llmModel: 'claude-3-5-sonnet-20241022',
   temperature: 0.3,
   maxTokens: 500,
+  overlayOpacity: 0.88,
   profile: DEFAULT_PROFILE,
 };
 
@@ -140,6 +142,7 @@ export class StoreService {
       sttLanguage: this.data.sttLanguage,
       overlayWidth: this.data.overlayWidth,
       overlayHeight: this.data.overlayHeight,
+      overlayOpacity: typeof this.data.overlayOpacity === 'number' ? this.data.overlayOpacity : 0.88,
     };
   }
 
@@ -189,6 +192,7 @@ export class StoreService {
     if (newSettings.sttLanguage) this.data.sttLanguage = newSettings.sttLanguage;
     if (typeof newSettings.overlayWidth === 'number') this.data.overlayWidth = newSettings.overlayWidth;
     if (typeof newSettings.overlayHeight === 'number') this.data.overlayHeight = newSettings.overlayHeight;
+    if (typeof newSettings.overlayOpacity === 'number') this.data.overlayOpacity = newSettings.overlayOpacity;
 
     if (newSettings.profile) {
       this.data.profile = {

@@ -96,9 +96,10 @@ export interface AppSettings {
   consentAcceptedAt?: number;
   // Milestone 7: Language & Diarization
   sttLanguage?: 'en' | 'hi' | 'multi';
-  // Overlay Dimensions (Adjustable Length & Width)
+  // Overlay Dimensions (Adjustable Length & Width) & Opacity
   overlayWidth?: number;
   overlayHeight?: number;
+  overlayOpacity?: number;
 }
 
 export interface AppDiagnostics {
@@ -133,6 +134,8 @@ export const IPC_CHANNELS = {
   OVERLAY_GET_CLICK_THROUGH: 'overlay:get-click-through',
   OVERLAY_SET_SIZE: 'overlay:set-size',
   OVERLAY_GET_SIZE: 'overlay:get-size',
+  OVERLAY_SET_OPACITY: 'overlay:set-opacity',
+  OVERLAY_OPACITY_CHANGED: 'overlay:opacity-changed',
   OVERLAY_CLOSE: 'overlay:close',
   HOTKEY_TRIGGERED: 'hotkey:triggered',
   SESSION_START: 'session:start',
@@ -148,6 +151,7 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_OPEN: 'settings:open',
+  SETTINGS_VISIBILITY_CHANGED: 'settings:visibility-changed',
   // Milestone 6: Consent & Data Purge
   CONSENT_ACCEPT: 'consent:accept',
   DATA_CLEAR_ALL: 'data:clear-all',
@@ -166,6 +170,8 @@ export interface ElectronAPI {
   getClickThrough: () => Promise<boolean>;
   setOverlaySize: (width: number, height: number) => Promise<{ width: number; height: number }>;
   getOverlaySize: () => Promise<{ width: number; height: number }>;
+  setOverlayOpacity: (opacity: number) => Promise<number>;
+  onOverlayOpacityChanged: (callback: (opacity: number) => void) => () => void;
   close: () => Promise<void>;
   onHotkey: (callback: (action: HotkeyAction) => void) => () => void;
   // Session & Audio channels
@@ -185,7 +191,8 @@ export interface ElectronAPI {
   // Settings & Profile channels (Milestone 4)
   getSettings: () => Promise<AppSettings>;
   setSettings: (settings: AppSettings) => Promise<AppSettings>;
-  openSettings: () => Promise<void>;
+  openSettings: () => Promise<boolean>;
+  onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void) => () => void;
   // Milestone 6: Consent & Data Purge
   acceptConsent: () => Promise<void>;
   clearAllData: () => Promise<void>;

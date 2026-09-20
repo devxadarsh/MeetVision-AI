@@ -16,14 +16,14 @@
   display: flex;
   flex-direction: column;
   position: relative;
-  background: rgba(18, 20, 26, 0.88);
+  background: rgba(18, 20, 26, var(--overlay-bg-opacity, 0.88));
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.15s ease;
 
   &.click-through-active {
     border-color: rgba(245, 158, 11, 0.6);
@@ -63,9 +63,17 @@
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-  70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+
+  70% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 .title-meta {
@@ -114,7 +122,10 @@
     background: rgba(99, 102, 241, 0.15);
     border-color: rgba(99, 102, 241, 0.3);
     color: #a5b4fc;
-    &:hover { background: rgba(99, 102, 241, 0.25); }
+
+    &:hover {
+      background: rgba(99, 102, 241, 0.25);
+    }
   }
 
   &.click-thru-chip.active {
@@ -122,6 +133,24 @@
     border-color: rgba(245, 158, 11, 0.5);
     color: #fbbf24;
     font-weight: 600;
+  }
+
+  &.settings-chip {
+    font-size: 15px;
+    line-height: 1;
+    padding: 3px 6px;
+    min-width: 26px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    &.active {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: rgba(56, 189, 248, 0.5);
+      color: #38bdf8;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+    }
   }
 }
 
@@ -206,12 +235,27 @@
     background: rgba(79, 70, 229, 0.3);
     border-color: rgba(99, 102, 241, 0.4);
     color: #c7d2fe;
-    &:hover { background: rgba(79, 70, 229, 0.5); color: #fff; }
+
+    &:hover {
+      background: rgba(79, 70, 229, 0.5);
+      color: #fff;
+    }
   }
 
   &.icon-only {
-    padding: 4px 7px;
-    font-size: 12px;
+    padding: 3px 6px;
+    font-size: 15px;
+    line-height: 1;
+    min-width: 26px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    &.collapse-btn {
+      font-size: 16px;
+      font-weight: 700;
+    }
   }
 
   &.danger:hover {
@@ -251,7 +295,10 @@
   gap: 10px;
   -webkit-app-region: no-drag;
 
-  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar {
+    width: 5px;
+  }
+
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 4px;
@@ -351,10 +398,26 @@
   padding: 2px 6px;
   border-radius: 4px;
 
-  &.badge-new { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
-  &.badge-answering { background: rgba(99, 102, 241, 0.25); color: #a5b4fc; animation: pulse 1.5s infinite; }
-  &.badge-answered { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
-  &.badge-pinned { background: rgba(139, 92, 246, 0.25); color: #c4b5fd; }
+  &.badge-new {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+  }
+
+  &.badge-answering {
+    background: rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    animation: pulse 1.5s infinite;
+  }
+
+  &.badge-answered {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+  }
+
+  &.badge-pinned {
+    background: rgba(139, 92, 246, 0.25);
+    color: #c4b5fd;
+  }
 }
 
 .time-stamp {
@@ -378,9 +441,18 @@
   cursor: pointer;
   transition: all 0.1s;
 
-  &:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-  &.active { color: #c4b5fd; }
-  &.close:hover { color: #f87171; }
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  &.active {
+    color: #c4b5fd;
+  }
+
+  &.close:hover {
+    color: #f87171;
+  }
 }
 
 .question-text {
@@ -448,7 +520,9 @@
   line-height: 1.2;
 }
 
-.bullet-content { flex: 1; }
+.bullet-content {
+  flex: 1;
+}
 
 .code-block {
   background: rgba(0, 0, 0, 0.45);
@@ -457,7 +531,11 @@
   padding: 6px 8px;
   margin-top: 4px;
 
-  pre { margin: 0; overflow-x: auto; }
+  pre {
+    margin: 0;
+    overflow-x: auto;
+  }
+
   code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
@@ -538,7 +616,10 @@
   flex-direction: column;
   gap: 8px;
 
-  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar {
+    width: 5px;
+  }
+
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 4px;
@@ -610,8 +691,15 @@
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Footer */
@@ -671,7 +759,9 @@ kbd {
   padding: 0;
   text-decoration: underline;
 
-  &:hover { color: #9ca3af; }
+  &:hover {
+    color: #9ca3af;
+  }
 }
 
 /* Corner Resize Handle */
@@ -796,6 +886,50 @@ kbd {
   }
 }
 
+/* Custom Tooltip */
+.custom-tooltip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  background: rgba(30, 30, 40, 0.98);
+  color: #f3f4f6;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 9999;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: tooltipFadeIn 0.15s ease-out;
+
+  // Tooltip arrow pointing down
+  &::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(30, 30, 40, 0.98);
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+  }
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 4px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%);
+  }
+}
+
 /* Milestone 7: Summary View */
 .summary-view {
   flex: 1;
@@ -806,7 +940,10 @@ kbd {
   gap: 12px;
   -webkit-app-region: no-drag;
 
-  &::-webkit-scrollbar { width: 5px; }
+  &::-webkit-scrollbar {
+    width: 5px;
+  }
+
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 4px;
@@ -835,7 +972,9 @@ kbd {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .summary-content {

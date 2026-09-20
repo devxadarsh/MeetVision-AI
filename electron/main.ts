@@ -23,6 +23,7 @@ let mainWindow: BrowserWindow | null = null;
 let captureWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let isClickThrough = false;
+let isQuitting = false;
 
 const storeService = new StoreService();
 const sttService = new SttService();
@@ -59,6 +60,7 @@ function createOverlayWindow(): void {
     resizable: true,
     skipTaskbar: true,
     hasShadow: false,
+    minimizable: false, // Prevent Cmd+H from hiding the window
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -139,10 +141,42 @@ function createCaptureWindow(): void {
   });
 }
 
+function broadcastSettingsVisibility(isOpen: boolean): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC_CHANNELS.SETTINGS_VISIBILITY_CHANGED, isOpen);
+  }
+}
+
+function toggleSettingsWindow(): boolean {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+      settingsWindow.show();
+      settingsWindow.focus();
+      broadcastSettingsVisibility(true);
+      return true;
+    }
+    if (settingsWindow.isVisible()) {
+      settingsWindow.hide();
+      broadcastSettingsVisibility(false);
+      return false;
+    } else {
+      settingsWindow.show();
+      settingsWindow.focus();
+      broadcastSettingsVisibility(true);
+      return true;
+    }
+  }
+
+  createSettingsWindow();
+  return true;
+}
+
 function createSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.show();
     settingsWindow.focus();
+    broadcastSettingsVisibility(true);
     return;
   }
 
@@ -172,8 +206,19 @@ function createSettingsWindow(): void {
     settingsWindow.loadURL(url.pathToFileURL(distPath).href + '#/settings');
   }
 
+  broadcastSettingsVisibility(true);
+
+  settingsWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      settingsWindow?.hide();
+      broadcastSettingsVisibility(false);
+    }
+  });
+
   settingsWindow.on('closed', () => {
     settingsWindow = null;
+    broadcastSettingsVisibility(false);
   });
 }
 
@@ -193,13 +238,30 @@ function sendHotkeyToRenderer(action: HotkeyAction): void {
 }
 
 function registerHotkeys(): void {
-  // Toggle Show/Hide overlay
+  // Toggle Show/Hide overlay with Cmd+Shift+H
+  globalShortcut.register('CommandOrControl+H', () => {
+    return;
+  });
+
   globalShortcut.register('CommandOrControl+Shift+H', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isVisible()) {
-      mainWindow.hide();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      console.log('[Hotkey] mainWindow is null or destroyed');
+      return;
+    }
+
+    const currentOpacity = mainWindow.getOpacity();
+    console.log('[Hotkey] Toggle visibility. Current opacity:', currentOpacity);
+
+    if (currentOpacity > 0) {
+      // Hide by setting opacity to 0 and disabling mouse events
+      mainWindow.setOpacity(0);
+      mainWindow.setIgnoreMouseEvents(true);
+      console.log('[Hotkey] Window hidden (opacity = 0)');
     } else {
-      mainWindow.show();
+      // Show by restoring opacity and mouse events
+      mainWindow.setOpacity(1);
+      mainWindow.setIgnoreMouseEvents(isClickThrough, { forward: true });
+      console.log('[Hotkey] Window shown (opacity = 1)');
     }
   });
 
@@ -231,7 +293,8 @@ function registerHotkeys(): void {
   // Panic hide: hide overlay immediately
   globalShortcut.register('CommandOrControl+Escape', () => {
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-      mainWindow.hide();
+      mainWindow.setOpacity(0);
+      mainWindow.setIgnoreMouseEvents(true);
     }
   });
 }
@@ -331,6 +394,15 @@ function registerIpcHandlers(): void {
     return { width: 380, height: 600 };
   });
 
+  ipcMain.handle(IPC_CHANNELS.OVERLAY_SET_OPACITY, async (_event, opacity: number) => {
+    const clamped = Math.max(0.2, Math.min(1.0, Number(opacity) || 0.88));
+    storeService.updateSettings({ overlayOpacity: clamped });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, clamped);
+    }
+    return clamped;
+  });
+
   ipcMain.handle(IPC_CHANNELS.OVERLAY_CLOSE, async () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.close();
@@ -416,11 +488,15 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
-    return storeService.updateSettings(newSettings);
+    const updated = storeService.updateSettings(newSettings);
+    if (mainWindow && !mainWindow.isDestroyed() && typeof updated.overlayOpacity === 'number') {
+      mainWindow.webContents.send(IPC_CHANNELS.OVERLAY_OPACITY_CHANGED, updated.overlayOpacity);
+    }
+    return updated;
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_OPEN, async () => {
-    createSettingsWindow();
+    toggleSettingsWindow();
   });
 
   // Milestone 6: Consent & Data Purge
@@ -607,6 +683,10 @@ app.whenReady().then(() => {
       createCaptureWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });
 
 app.on('will-quit', () => {

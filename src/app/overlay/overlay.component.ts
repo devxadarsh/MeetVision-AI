@@ -101,6 +101,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly showHotkeys = signal(true);
   readonly toastMessage = signal<string | null>(null);
   readonly showConsentModal = signal(false);
+  readonly overlayOpacity = signal<number>(0.88);
+  readonly isSettingsOpen = signal(false);
 
   // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
   readonly currentTab = signal<'questions' | 'transcript' | 'summary'>('questions');
@@ -115,6 +117,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly activeInterim = signal<TranscriptSegment | null>(null);
   readonly audioLevel = signal<number>(0);
   readonly sttProvider = signal<string>('Initializing STT...');
+
+  // Custom Tooltip State
+  readonly tooltipText = signal<string | null>(null);
+  readonly tooltipPosition = signal<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Set of collapsed question IDs
   readonly collapsedIds = signal<Set<string>>(new Set<string>());
@@ -153,6 +159,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeTranscript?: () => void;
   private unsubscribeQuestionNew?: () => void;
   private unsubscribeAnswerChunk?: () => void;
+  private unsubscribeOverlayOpacity?: () => void;
+  private unsubscribeSettingsVisibility?: () => void;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
@@ -169,6 +177,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private async checkConsentStatus(): Promise<void> {
     try {
       const settings = await this.ipcService.getSettings();
+      if (typeof settings.overlayOpacity === 'number') {
+        this.overlayOpacity.set(settings.overlayOpacity);
+      }
       if (!settings.hasAcceptedConsent) {
         this.showConsentModal.set(true);
         this.isListening.set(false);
@@ -198,6 +209,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (this.unsubscribeTranscript) this.unsubscribeTranscript();
     if (this.unsubscribeQuestionNew) this.unsubscribeQuestionNew();
     if (this.unsubscribeAnswerChunk) this.unsubscribeAnswerChunk();
+    if (this.unsubscribeOverlayOpacity) this.unsubscribeOverlayOpacity();
+    if (this.unsubscribeSettingsVisibility) this.unsubscribeSettingsVisibility();
   }
 
   private seedInitialQuestions(): void {
@@ -274,6 +287,16 @@ export class OverlayComponent implements OnInit, OnDestroy {
     // Global Hotkeys
     this.unsubscribeHotkey = this.ipcService.onHotkey((action: HotkeyAction) => {
       this.handleHotkeyAction(action);
+    });
+
+    // Reactive Overlay Opacity (live updates from Settings)
+    this.unsubscribeOverlayOpacity = this.ipcService.onOverlayOpacityChanged((opacity: number) => {
+      this.overlayOpacity.set(opacity);
+    });
+
+    // Settings Window Visibility (Toggle State)
+    this.unsubscribeSettingsVisibility = this.ipcService.onSettingsVisibilityChanged((isOpen: boolean) => {
+      this.isSettingsOpen.set(isOpen);
     });
 
     // Real-time Audio Level Meter (Milestone 2)
@@ -495,10 +518,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   async openSettings(): Promise<void> {
-    if (this.isElectron()) {
-      await this.ipcService.openSettings();
-    } else {
-      window.location.hash = '#/settings';
+    const isOpen = await this.ipcService.openSettings();
+    if (typeof isOpen === 'boolean') {
+      this.isSettingsOpen.set(isOpen);
     }
   }
 
@@ -796,5 +818,21 @@ export class OverlayComponent implements OnInit, OnDestroy {
         this.toastMessage.set(null);
       }
     }, 2500);
+  }
+
+  showTooltip(event: MouseEvent, text: string): void {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+
+    // Position tooltip above the button
+    this.tooltipPosition.set({
+      x: rect.left + rect.width / 2,
+      y: rect.top - 8
+    });
+    this.tooltipText.set(text);
+  }
+
+  hideTooltip(): void {
+    this.tooltipText.set(null);
   }
 }

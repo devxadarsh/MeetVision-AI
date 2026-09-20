@@ -65,7 +65,7 @@
         [class.active]="activeTab() === 'overlay'"
         (click)="activeTab.set('overlay')"
       >
-        🪟 Overlay Sizing
+        🪟 Appearance & Sizing
       </button>
       <button
         type="button"
@@ -90,6 +90,14 @@
         (click)="activeTab.set('privacy')"
       >
         🛡️ Privacy & Storage
+      </button>
+      <button
+        type="button"
+        class="tab-link"
+        [class.active]="activeTab() === 'shortcuts'"
+        (click)="activeTab.set('shortcuts')"
+      >
+        ⌨️ Keyboard Shortcuts
       </button>
       <button
         type="button"
@@ -334,137 +342,328 @@
     }
 
     <!-- Tab: Overlay Sizing & Dimensions -->
+    <!-- Tab: Overlay Appearance & Sizing (Compact) -->
     @if (activeTab() === 'overlay') {
-      <section class="section-panel">
-        <div class="panel-header">
-          <h2>Overlay Dimensions & Layout</h2>
-          <p>
-            Adjust the length (height) and width of the floating meeting overlay to match your screen resolution and preferred reading space.
-          </p>
+      <section class="section-panel compact-sizing-panel">
+        <div class="panel-header compact-header">
+          <div class="header-with-action">
+            <div>
+              <h2>Overlay Appearance & Sizing</h2>
+              <p>
+                Configure window dimensions and background acrylic transparency.
+              </p>
+            </div>
+            <div class="header-specs">
+              <span class="spec-pill">{{ overlayWidth() }} × {{ overlayHeight() }} px</span>
+              <span class="spec-pill highlight">{{ opacityPercent() }}% Opacity</span>
+            </div>
+          </div>
         </div>
 
-        <!-- Quick Presets -->
-        <div class="form-group">
-          <label class="form-label">Dimension Presets</label>
-          <div class="preset-buttons-grid">
+        <!-- Top Split: Preview & Transparency in one row -->
+        <div class="compact-top-grid">
+          <!-- Live Interactive Mini-Preview -->
+          <div class="preview-stage-container compact-preview">
+            <div class="preview-stage-header">
+              <div class="stage-label">
+                <span class="stage-dot"></span> Live Overlay Preview
+              </div>
+              <div class="stage-stats">
+                {{ overlayWidth() }}×{{ overlayHeight() }} • {{ opacityPercent() }}%
+              </div>
+            </div>
+
+            <div class="preview-stage-viewport">
+              <!-- High-Contrast Simulated Meeting Screen (Presentation & Code) -->
+              <div class="meeting-background-simulation">
+                <div class="sim-slide-header">
+                  <span class="sim-badge">SLIDE 4</span>
+                  <span class="sim-title">PAYMENT RETRY ARCHITECTURE</span>
+                </div>
+                <div class="sim-metrics-row">
+                  <span class="sim-metric cyan">Latency: 42ms</span>
+                  <span class="sim-metric green">SLA: 99.99%</span>
+                  <span class="sim-metric amber">Canary: 10%</span>
+                </div>
+                <div class="sim-code-snippet">
+                  <div class="sim-code-line"><span class="sim-keyword">const</span> retry = <span class="sim-fn">backoff</span>(3, 4000);</div>
+                  <div class="sim-code-line"><span class="sim-keyword">return</span> <span class="sim-fn">dispatchQueue</span>(retry);</div>
+                </div>
+              </div>
+
+              <!-- Mini Overlay Representation with Live Dynamic Dimensions & Transparency -->
+              <div
+                class="mini-overlay-mockup"
+                [style.width.px]="previewWidth()"
+                [style.minHeight.px]="previewHeight()"
+                [style.background]="'rgba(18, 20, 26, ' + overlayOpacity() + ')'"
+              >
+                <div class="mini-overlay-header">
+                  <div class="mini-header-left">
+                    <span class="mini-status-dot"></span>
+                    <span class="mini-title">QuestionLens</span>
+                  </div>
+                  <span class="mini-chip">Short</span>
+                </div>
+                <div class="mini-question-box">
+                  <div class="mini-q-title">Q: Retry logic in payments?</div>
+                  <div class="mini-bullet">• 3 retries with jittered backoff</div>
+                </div>
+                <div class="mini-resize-indicator">
+                  {{ overlayWidth() }} × {{ overlayHeight() }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Background Transparency Controls -->
+          <div class="control-card compact-card opacity-card">
+            <div class="card-header">
+              <div class="card-title-group">
+                <span class="card-icon">🎨</span>
+                <div>
+                  <h3 class="card-title">Background Transparency</h3>
+                  <p class="card-subtitle">Adjust acrylic opacity & blur</p>
+                </div>
+              </div>
+              <span class="slider-value-badge opacity-badge">{{ opacityPercent() }}%</span>
+            </div>
+
+            <!-- Opacity Slider -->
+            <div class="slider-row compact-slider-row">
+              <span class="slider-bound">20%</span>
+              <input
+                id="opacity-slider"
+                type="range"
+                min="0.20"
+                max="1.00"
+                step="0.05"
+                class="form-slider opacity-slider"
+                [value]="overlayOpacity()"
+                (input)="onOverlayOpacityChange($event)"
+              />
+              <span class="slider-bound">100%</span>
+            </div>
+
+            <!-- Quick Opacity Presets -->
+            <div class="opacity-presets-row compact-presets">
+              <button
+                type="button"
+                class="opacity-preset-btn"
+                [class.active]="opacityPercent() === 50"
+                (click)="applyOverlayOpacity(0.50)"
+              >
+                Glass 50%
+              </button>
+              <button
+                type="button"
+                class="opacity-preset-btn"
+                [class.active]="opacityPercent() === 70"
+                (click)="applyOverlayOpacity(0.70)"
+              >
+                Translucent 70%
+              </button>
+              <button
+                type="button"
+                class="opacity-preset-btn"
+                [class.active]="opacityPercent() === 88"
+                (click)="applyOverlayOpacity(0.88)"
+              >
+                Default 88%
+              </button>
+              <button
+                type="button"
+                class="opacity-preset-btn"
+                [class.active]="opacityPercent() === 98"
+                (click)="applyOverlayOpacity(0.98)"
+              >
+                Solid 98%
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Viewport Dimension Presets Strip -->
+        <div class="control-card compact-card">
+          <div class="card-header compact-mb">
+            <div class="card-title-group">
+              <span class="card-icon">📐</span>
+              <div>
+                <h3 class="card-title">Dimension Presets</h3>
+                <p class="card-subtitle">Quick size layouts calibrated for your display</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="preset-strip-grid">
             <button
               type="button"
-              class="preset-btn"
+              class="preset-strip-btn"
               [class.active]="overlayWidth() === 340 && overlayHeight() === 500"
               (click)="applyOverlaySize(340, 500)"
             >
-              <span class="preset-name">Compact</span>
-              <span class="preset-dimensions">340 × 500 px</span>
+              <span class="preset-badge compact">Compact</span>
+              <span class="preset-size">340 × 500</span>
+              <span class="preset-sub">13" Laptops</span>
             </button>
+
             <button
               type="button"
-              class="preset-btn"
+              class="preset-strip-btn"
               [class.active]="overlayWidth() === 380 && overlayHeight() === 600"
               (click)="applyOverlaySize(380, 600)"
             >
-              <span class="preset-name">Standard</span>
-              <span class="preset-dimensions">380 × 600 px</span>
+              <span class="preset-badge standard">Standard</span>
+              <span class="preset-size">380 × 600</span>
+              <span class="preset-sub">1080p Default</span>
             </button>
+
             <button
               type="button"
-              class="preset-btn"
+              class="preset-strip-btn"
               [class.active]="overlayWidth() === 480 && overlayHeight() === 650"
               (click)="applyOverlaySize(480, 650)"
             >
-              <span class="preset-name">Wide</span>
-              <span class="preset-dimensions">480 × 650 px</span>
+              <span class="preset-badge wide">Wide</span>
+              <span class="preset-size">480 × 650</span>
+              <span class="preset-sub">Code & Details</span>
             </button>
+
             <button
               type="button"
-              class="preset-btn"
+              class="preset-strip-btn"
               [class.active]="overlayWidth() === 560 && overlayHeight() === 750"
               (click)="applyOverlaySize(560, 750)"
             >
-              <span class="preset-name">Expanded</span>
-              <span class="preset-dimensions">560 × 750 px</span>
+              <span class="preset-badge expanded">Expanded</span>
+              <span class="preset-size">560 × 750</span>
+              <span class="preset-sub">1440p / 4K</span>
             </button>
           </div>
         </div>
 
-        <!-- Custom Width Slider & Input -->
-        <div class="form-group">
-          <div class="slider-header">
-            <label for="width-slider" class="form-label">Overlay Width: {{ overlayWidth() }} px</label>
-            <span class="slider-value-badge">{{ overlayWidth() }}px</span>
+        <!-- Fine-Tuned Custom Sliders (Width & Height) -->
+        <div class="dimensions-dual-grid compact-dual">
+          <!-- Width Control -->
+          <div class="control-card compact-card dimension-card">
+            <div class="card-header">
+              <div>
+                <h4 class="mini-card-title">Width</h4>
+                <span class="mini-card-subtitle">300 – 1200px</span>
+              </div>
+              <div class="stepper-group">
+                <button
+                  type="button"
+                  class="btn-step"
+                  (click)="stepWidth(-20)"
+                  title="Decrease width by 20px"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min="300"
+                  max="1200"
+                  step="10"
+                  class="dimension-number-input"
+                  [value]="overlayWidth()"
+                  (input)="onOverlayWidthChange($event)"
+                />
+                <span class="unit-label">px</span>
+                <button
+                  type="button"
+                  class="btn-step"
+                  (click)="stepWidth(20)"
+                  title="Increase width by 20px"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div class="slider-row compact-slider-row">
+              <span class="slider-bound">300px</span>
+              <input
+                id="width-slider"
+                type="range"
+                min="300"
+                max="1200"
+                step="10"
+                class="form-slider"
+                [value]="overlayWidth()"
+                (input)="onOverlayWidthChange($event)"
+              />
+              <span class="slider-bound">1200px</span>
+            </div>
           </div>
-          <div class="dimension-input-row">
-            <input
-              id="width-slider"
-              type="range"
-              min="300"
-              max="1200"
-              step="10"
-              class="form-slider"
-              [value]="overlayWidth()"
-              (input)="onOverlayWidthChange($event)"
-            />
-            <input
-              type="number"
-              min="300"
-              max="1200"
-              step="10"
-              class="dimension-number-input"
-              [value]="overlayWidth()"
-              (input)="onOverlayWidthChange($event)"
-            />
+
+          <!-- Height (Length) Control -->
+          <div class="control-card compact-card dimension-card">
+            <div class="card-header">
+              <div>
+                <h4 class="mini-card-title">Length (Height)</h4>
+                <span class="mini-card-subtitle">400 – 1100px</span>
+              </div>
+              <div class="stepper-group">
+                <button
+                  type="button"
+                  class="btn-step"
+                  (click)="stepHeight(-20)"
+                  title="Decrease height by 20px"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min="400"
+                  max="1100"
+                  step="10"
+                  class="dimension-number-input"
+                  [value]="overlayHeight()"
+                  (input)="onOverlayHeightChange($event)"
+                />
+                <span class="unit-label">px</span>
+                <button
+                  type="button"
+                  class="btn-step"
+                  (click)="stepHeight(20)"
+                  title="Increase height by 20px"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div class="slider-row compact-slider-row">
+              <span class="slider-bound">400px</span>
+              <input
+                id="height-slider"
+                type="range"
+                min="400"
+                max="1100"
+                step="10"
+                class="form-slider"
+                [value]="overlayHeight()"
+                (input)="onOverlayHeightChange($event)"
+              />
+              <span class="slider-bound">1100px</span>
+            </div>
           </div>
-          <span class="field-hint">
-            Minimum 300px, maximum 1200px.
-          </span>
         </div>
 
-        <!-- Custom Height (Length) Slider & Input -->
-        <div class="form-group">
-          <div class="slider-header">
-            <label for="height-slider" class="form-label">Overlay Length (Height): {{ overlayHeight() }} px</label>
-            <span class="slider-value-badge">{{ overlayHeight() }}px</span>
+        <!-- Action Bar with inline tip -->
+        <div class="compact-footer-bar">
+          <div class="inline-tip">
+            <span class="tip-bulb">💡</span>
+            <span>Drag the bottom-right corner grip on the overlay window to fluidly resize anytime.</span>
           </div>
-          <div class="dimension-input-row">
-            <input
-              id="height-slider"
-              type="range"
-              min="400"
-              max="1100"
-              step="10"
-              class="form-slider"
-              [value]="overlayHeight()"
-              (input)="onOverlayHeightChange($event)"
-            />
-            <input
-              type="number"
-              min="400"
-              max="1100"
-              step="10"
-              class="dimension-number-input"
-              [value]="overlayHeight()"
-              (input)="onOverlayHeightChange($event)"
-            />
-          </div>
-          <span class="field-hint">
-            Minimum 400px, maximum 1100px.
-          </span>
-        </div>
-
-        <div class="dimension-actions">
           <button
             type="button"
-            class="btn-primary"
+            class="btn-primary apply-btn"
             (click)="applyOverlaySize(overlayWidth(), overlayHeight())"
           >
-            Apply Dimensions
+            ✓ Apply Window Dimensions
           </button>
-        </div>
-
-        <div class="info-tip-box">
-          <span class="tip-icon">💡</span>
-          <span class="tip-text">
-            <strong>Interactive Drag Resizing:</strong> You can also drag the bottom-right corner grip icon on the floating overlay window at any time to fluidly resize width and length.
-          </span>
         </div>
       </section>
     }
@@ -686,6 +885,110 @@
           <span class="field-hint">
             Used for 16 kHz WebSocket streaming transcription during live calls.
           </span>
+        </div>
+      </section>
+    }
+
+    <!-- Tab: Keyboard Shortcuts -->
+    @if (activeTab() === 'shortcuts') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <h2>Keyboard Shortcuts Reference</h2>
+          <p>Global hotkeys that work even when the overlay is not focused or hidden.</p>
+        </div>
+
+        <div class="shortcuts-section">
+          <h3 class="shortcuts-category-title">🪟 Window & View Management</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Toggle Show / Hide Overlay</strong>
+                <p>Seamlessly toggle overlay window visibility on and off without terminating or interrupting the meeting audio session.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Toggle Click-Through Mode</strong>
+                <p>Enable or disable mouse click pass-through. When active, clicks go through the overlay to windows behind it.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>Esc</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Panic Hide</strong>
+                <p>Instantly hide the overlay window. Perfect for quick presentation moments or screen shares.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="shortcuts-section">
+          <h3 class="shortcuts-category-title">💬 Question & Answer Controls</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>C</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Clear Unpinned Questions</strong>
+                <p>Remove all unpinned questions from the feed. Pinned questions remain visible.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>P</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Pin Latest Question</strong>
+                <p>Pin the most recent question to keep it at the top of your feed. Use again to unpin.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>Y</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Copy Latest Answer</strong>
+                <p>Copy the talking points from the most recent answer to your clipboard for pasting.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>R</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Regenerate Answer</strong>
+                <p>Generate a fresh set of talking points for the latest question with updated context.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-tip-box shortcuts-note">
+          <span class="tip-icon">💡</span>
+          <div class="tip-text">
+            <strong>Platform Note:</strong> On Windows and Linux, replace <kbd>⌘</kbd> (Command) with <kbd>Ctrl</kbd> for all shortcuts above.
+          </div>
+        </div>
+
+        <div class="info-tip-box shortcuts-note">
+          <span class="tip-icon">⚙️</span>
+          <div class="tip-text">
+            <strong>How Shortcuts Work:</strong> These global hotkeys are registered with your operating system and work anywhere—even when the overlay is hidden, minimized, or another application is focused. They're designed for rapid meeting assistance without disrupting your workflow.
+          </div>
         </div>
       </section>
     }

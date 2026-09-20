@@ -1,4 +1,8 @@
-    <div class="overlay-container" [class.click-through-active]="clickThroughActive()">
+    <div
+      class="overlay-container"
+      [class.click-through-active]="clickThroughActive()"
+      [style.--overlay-bg-opacity]="overlayOpacity()"
+    >
       <!-- First-Run Legal & Privacy Consent Dialog (PRD Section 11 / Milestone 6) -->
       @if (showConsentModal()) {
         <div class="consent-modal-backdrop">
@@ -54,17 +58,20 @@
             type="button"
             class="chip mode-chip"
             (click)="cycleAnswerMode()"
-            [title]="'Current Mode: ' + selectedMode() + ' (click to cycle)'"
+            (mouseenter)="showTooltip($event, 'Current Mode: ' + selectedMode() + ' (click to cycle)')"
+            (mouseleave)="hideTooltip()"
           >
             {{ selectedMode() }}
           </button>
 
-          <!-- Settings Button -->
+          <!-- Settings Button (Toggle) -->
           <button
             type="button"
-            class="chip"
+            class="chip settings-chip"
+            [class.active]="isSettingsOpen()"
             (click)="openSettings()"
-            title="Open Preferences & Context Profile"
+            (mouseenter)="showTooltip($event, isSettingsOpen() ? 'Close Settings' : 'Open Preferences & Context Profile')"
+            (mouseleave)="hideTooltip()"
           >
             ⚙
           </button>
@@ -75,7 +82,8 @@
             class="chip click-thru-chip"
             [class.active]="clickThroughActive()"
             (click)="toggleClickThrough()"
-            [title]="clickThroughActive() ? 'Click-through ON (⌘⇧M to toggle)' : 'Enable Click-through'"
+            (mouseenter)="showTooltip($event, clickThroughActive() ? 'Click-through ON (⌘⇧M to toggle)' : 'Enable Click-through')"
+            (mouseleave)="hideTooltip()"
           >
             @if (clickThroughActive()) {
               ⚡ Click-Thru
@@ -126,15 +134,17 @@
               type="button"
               class="action-btn primary"
               (click)="simulateNewQuestion()"
-              title="Simulate a new question arriving"
+              (mouseenter)="showTooltip($event, 'Simulate a new question arriving')"
+              (mouseleave)="hideTooltip()"
             >
               <span class="btn-icon">+</span> Question
             </button>
             <button
               type="button"
-              class="action-btn icon-only"
+              class="action-btn icon-only collapse-btn"
               (click)="toggleCollapseAll()"
-              [title]="allCollapsed() ? 'Expand all' : 'Collapse all'"
+              (mouseenter)="showTooltip($event, allCollapsed() ? 'Expand all' : 'Collapse all')"
+              (mouseleave)="hideTooltip()"
             >
               {{ allCollapsed() ? '⤢' : '⤡' }}
             </button>
@@ -142,7 +152,8 @@
               type="button"
               class="action-btn icon-only danger"
               (click)="clearUnpinnedQuestions()"
-              title="Clear unpinned (⌘⇧C)"
+              (mouseenter)="showTooltip($event, 'Clear unpinned (⌘⇧C)')"
+              (mouseleave)="hideTooltip()"
             >
               🗑
             </button>
@@ -152,7 +163,8 @@
               class="action-btn"
               [class.primary]="!isListening()"
               (click)="toggleSessionListening()"
-              [title]="isListening() ? 'Pause live audio session' : 'Resume live audio session'"
+              (mouseenter)="showTooltip($event, isListening() ? 'Pause live audio session' : 'Resume live audio session')"
+              (mouseleave)="hideTooltip()"
             >
               {{ isListening() ? '⏸ Pause' : '▶ Start' }}
             </button>
@@ -160,7 +172,8 @@
               type="button"
               class="action-btn icon-only danger"
               (click)="clearTranscript()"
-              title="Clear transcript"
+              (mouseenter)="showTooltip($event, 'Clear transcript')"
+              (mouseleave)="hideTooltip()"
             >
               🗑
             </button>
@@ -170,7 +183,8 @@
               class="action-btn primary"
               (click)="exportMeetingSummary()"
               [disabled]="isExportingSummary() || !meetingSummary()"
-              title="Save summary as Markdown file"
+              (mouseenter)="showTooltip($event, 'Save summary as Markdown file')"
+              (mouseleave)="hideTooltip()"
             >
               📥 Export
             </button>
@@ -179,7 +193,8 @@
               class="action-btn icon-only"
               (click)="copySummaryMarkdown()"
               [disabled]="!meetingSummary()"
-              title="Copy markdown to clipboard"
+              (mouseenter)="showTooltip($event, 'Copy markdown to clipboard')"
+              (mouseleave)="hideTooltip()"
             >
               📋
             </button>
@@ -188,7 +203,8 @@
               class="action-btn icon-only"
               (click)="generateMeetingSummary()"
               [disabled]="isGeneratingSummary()"
-              title="Refresh / regenerate summary"
+              (mouseenter)="showTooltip($event, 'Refresh / regenerate summary')"
+              (mouseleave)="hideTooltip()"
             >
               🔄
             </button>
@@ -251,7 +267,8 @@
                       class="card-action-btn"
                       [class.active]="q.status === 'pinned'"
                       (click)="togglePin(q.id)"
-                      [title]="q.status === 'pinned' ? 'Unpin question' : 'Pin question (⌘⇧P)'"
+                      (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin question' : 'Pin question (⌘⇧P)')"
+                      (mouseleave)="hideTooltip()"
                     >
                       📌
                     </button>
@@ -259,7 +276,8 @@
                       type="button"
                       class="card-action-btn"
                       (click)="regenerateAnswer(q)"
-                      title="Regenerate talking points (⌘⇧R)"
+                      (mouseenter)="showTooltip($event, 'Regenerate talking points (⌘⇧R)')"
+                      (mouseleave)="hideTooltip()"
                     >
                       🔄
                     </button>
@@ -267,7 +285,8 @@
                       type="button"
                       class="card-action-btn"
                       (click)="copyAnswer(q)"
-                      title="Copy talking points (⌘⇧Y)"
+                      (mouseenter)="showTooltip($event, 'Copy talking points (⌘⇧Y)')"
+                      (mouseleave)="hideTooltip()"
                     >
                       📋
                     </button>
@@ -275,7 +294,8 @@
                       type="button"
                       class="card-action-btn close"
                       (click)="dismissQuestion(q.id)"
-                      title="Dismiss question"
+                      (mouseenter)="showTooltip($event, 'Dismiss question')"
+                      (mouseleave)="hideTooltip()"
                     >
                       ✕
                     </button>
@@ -501,4 +521,15 @@
           <path d="M8 2L2 8M9 5L5 9M9 8L8 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
         </svg>
       </div>
+
+      <!-- Custom Tooltip -->
+      @if (tooltipText()) {
+        <div
+          class="custom-tooltip"
+          [style.left.px]="tooltipPosition().x"
+          [style.top.px]="tooltipPosition().y"
+        >
+          {{ tooltipText() }}
+        </div>
+      }
     </div>

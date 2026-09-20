@@ -77,6 +77,18 @@ export class IpcService {
     return this.api.getOverlaySize();
   }
 
+  async setOverlayOpacity(opacity: number): Promise<number> {
+    if (!this.api) {
+      return opacity;
+    }
+    return this.api.setOverlayOpacity(opacity);
+  }
+
+  onOverlayOpacityChanged(callback: (opacity: number) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onOverlayOpacityChanged(callback);
+  }
+
   async close(): Promise<void> {
     if (!this.api) return;
     return this.api.close();
@@ -159,6 +171,7 @@ export class IpcService {
         llmModel: 'claude-3-5-sonnet-20241022',
         temperature: 0.3,
         maxTokens: 500,
+        overlayOpacity: 0.88,
         hasAnthropicKey: false,
         hasDeepgramKey: false,
         isEncryptionAvailable: false,
@@ -181,9 +194,22 @@ export class IpcService {
     return this.api.setSettings(settings);
   }
 
-  async openSettings(): Promise<void> {
-    if (!this.api) return;
+  async openSettings(): Promise<boolean> {
+    if (!this.api) {
+      if (window.location.hash === '#/settings') {
+        window.location.hash = '#/overlay';
+        return false;
+      } else {
+        window.location.hash = '#/settings';
+        return true;
+      }
+    }
     return this.api.openSettings();
+  }
+
+  onSettingsVisibilityChanged(callback: (isOpen: boolean) => void): (() => void) | undefined {
+    if (!this.api) return undefined;
+    return this.api.onSettingsVisibilityChanged(callback);
   }
 
   // Milestone 6: Consent & Data Purge

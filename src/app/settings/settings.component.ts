@@ -4,6 +4,7 @@ import {
   OnInit,
   inject,
   signal,
+  computed,
 } from '@angular/core';
 import { IpcService } from '../core/ipc.service';
 import { AppSettings, ContextProfile, AppDiagnostics, KnowledgeDoc } from '@shared/ipc';
@@ -19,15 +20,27 @@ export class SettingsComponent implements OnInit {
   private readonly ipcService = inject(IpcService);
 
   // Tabs
-  readonly activeTab = signal<'profile' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'diagnostics'>('profile');
+  readonly activeTab = signal<'profile' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'>('profile');
 
   // Diagnostics Signal (Milestone 5)
   readonly diagnostics = signal<AppDiagnostics | null>(null);
   readonly isLoadingDiagnostics = signal(false);
 
-  // Overlay Dimensions
+  // Overlay Dimensions & Transparency
   readonly overlayWidth = signal(380);
   readonly overlayHeight = signal(600);
+  readonly overlayOpacity = signal(0.88);
+  readonly opacityPercent = computed(() => Math.round(this.overlayOpacity() * 100));
+
+  readonly previewWidth = computed(() => {
+    const w = this.overlayWidth();
+    return Math.round(140 + ((w - 300) / 900) * 85);
+  });
+
+  readonly previewHeight = computed(() => {
+    const h = this.overlayHeight();
+    return Math.round(85 + ((h - 400) / 700) * 45);
+  });
 
   // Context Profile Signals (FR-62)
   readonly role = signal('Staff Software Engineer / Tech Lead');
@@ -93,9 +106,10 @@ export class SettingsComponent implements OnInit {
     this.hasDeepgramKey.set(Boolean(settings.hasDeepgramKey));
     this.isEncryptionAvailable.set(settings.isEncryptionAvailable !== false);
 
-    // Overlay Dimensions
+    // Overlay Dimensions & Transparency
     if (settings.overlayWidth) this.overlayWidth.set(settings.overlayWidth);
     if (settings.overlayHeight) this.overlayHeight.set(settings.overlayHeight);
+    if (typeof settings.overlayOpacity === 'number') this.overlayOpacity.set(settings.overlayOpacity);
 
     await this.loadKnowledgeDocs();
   }
@@ -219,6 +233,32 @@ export class SettingsComponent implements OnInit {
     if (!isNaN(val)) this.overlayHeight.set(val);
   }
 
+  onOverlayOpacityChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    const val = parseFloat(target.value);
+    if (!isNaN(val)) {
+      this.applyOverlayOpacity(val);
+    }
+  }
+
+  async applyOverlayOpacity(opacity: number): Promise<void> {
+    const clamped = Math.round(Math.max(0.2, Math.min(1.0, opacity)) * 100) / 100;
+    this.overlayOpacity.set(clamped);
+    if (this.ipcService.isElectron()) {
+      await this.ipcService.setOverlayOpacity(clamped);
+    }
+  }
+
+  stepWidth(delta: number): void {
+    const next = Math.max(300, Math.min(1200, this.overlayWidth() + delta));
+    this.overlayWidth.set(next);
+  }
+
+  stepHeight(delta: number): void {
+    const next = Math.max(400, Math.min(1100, this.overlayHeight() + delta));
+    this.overlayHeight.set(next);
+  }
+
   async applyOverlaySize(w: number, h: number): Promise<void> {
     const clampedW = Math.max(300, Math.min(1600, w));
     const clampedH = Math.max(400, Math.min(1400, h));
@@ -242,6 +282,7 @@ export class SettingsComponent implements OnInit {
       maxTokens: this.maxTokens(),
       overlayWidth: this.overlayWidth(),
       overlayHeight: this.overlayHeight(),
+      overlayOpacity: this.overlayOpacity(),
       profile: {
         role: this.role(),
         projectSummary: this.projectSummary(),
@@ -284,6 +325,9 @@ export class SettingsComponent implements OnInit {
     this.llmModel.set('claude-3-5-sonnet-20241022');
     this.temperature.set(0.3);
     this.maxTokens.set(500);
+    this.overlayWidth.set(380);
+    this.overlayHeight.set(600);
+    this.applyOverlayOpacity(0.88);
     this.showToast('Defaults loaded. Click "Save Changes" to apply.', 'info');
   }
 
@@ -306,7 +350,7 @@ export class SettingsComponent implements OnInit {
     }
   }
 
-  switchTab(tab: 'profile' | 'ai' | 'keys' | 'knowledge' | 'privacy' | 'diagnostics'): void {
+  switchTab(tab: 'profile' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'): void {
     this.activeTab.set(tab);
     if (tab === 'diagnostics') {
       this.loadDiagnostics();
