@@ -234,7 +234,7 @@
       </section>
     }
 
-    <!-- Tab: Audio & Transcription (Modes A & B, Local Whisper, VAD, macOS Setup) -->
+    <!-- Tab: Audio & Transcription (Modes A & B, NVIDIA Parakeet, Apple Speech, VAD, macOS Setup) -->
     @if (activeTab() === 'audio') {
       <section class="section-panel">
         <div class="panel-header">
@@ -312,123 +312,177 @@
             [value]="sttProvider()"
             (change)="onSttProviderChange($event)"
           >
-            <option value="local-whisper">Local Whisper (Free, Apple Silicon Metal GPU, 100% Private)</option>
-            <option value="deepgram">Deepgram WebSocket Streaming (Cloud API)</option>
-            <option value="simulation">Meeting Dialogue Simulation (Offline / Testing)</option>
+            <option value="parakeet">NVIDIA Parakeet (FastConformer & Nemotron) [Recommended]</option>
+            <option value="apple-speech">Apple Speech (Native macOS Dictation & Neural Engine)</option>
           </select>
           <span class="field-hint">
-            Local Whisper runs inference on your Mac using Apple Silicon Metal acceleration with zero external API calls.
+            Switch speech-to-text engines dynamically without restarting. All engines run 100% on-device with zero cloud dependencies.
           </span>
+
+          <!-- STT Engine Model Download Requirement Status Card -->
+          <div
+            class="stt-download-requirement-card"
+            [class.no-download]="sttRequirement().badgeType === 'no-download'"
+            [class.ready]="sttRequirement().badgeType === 'ready'"
+            [class.download-needed]="sttRequirement().badgeType === 'download-needed'"
+          >
+            <div class="requirement-header-row">
+              <span class="requirement-badge" [attr.data-type]="sttRequirement().badgeType">
+                {{ sttRequirement().badgeLabel }}
+              </span>
+              <span class="requirement-model-name">{{ sttRequirement().modelName }}</span>
+            </div>
+            <p class="requirement-message">{{ sttRequirement().message }}</p>
+          </div>
         </div>
 
-        <!-- 3. Local Whisper Engine & Model Management -->
-        @if (sttProvider() === 'local-whisper') {
+        <!-- Apple Speech Panel -->
+        @if (sttProvider() === 'apple-speech') {
           <div class="whisper-panel">
             <div class="whisper-status-bar">
               <div class="status-indicator-box">
-                <span class="status-dot" [class.ready]="whisperStatus()?.available"></span>
+                <span class="status-dot ready"></span>
                 <div>
                   <strong>Engine Status: </strong>
-                  @if (whisperStatus()?.available) {
-                    <span class="status-text ready">whisper-cli detected & active</span>
-                    <span class="status-detail">({{ whisperStatus()?.gpuAcceleration || 'CPU' }})</span>
-                  } @else {
-                    <span class="status-text missing">whisper-cli not found</span>
-                  }
+                  <span class="status-text ready">Apple Speech Native Engine</span>
+                  <span class="status-detail">(macOS Speech.framework & Apple Neural Engine)</span>
                 </div>
               </div>
-              <div class="binary-path-hint" title="{{ whisperStatus()?.binaryPath || 'Not found' }}">
-                <code>{{ whisperStatus()?.binaryPath || 'Install via brew install whisper-cpp' }}</code>
+              <div class="binary-path-hint">
+                <code>macOS Built-in On-Device Dictation</code>
+              </div>
+            </div>
+            <div class="model-cards-grid" style="margin-top: 14px;">
+              <div class="model-box">
+                <div class="model-info">
+                  <div class="model-title-line">
+                    <span class="model-name">🍎 Zero Downloads Required</span>
+                  </div>
+                  <p class="model-summary">Built directly into macOS with hardware acceleration via Apple Silicon Neural Engine (ANE).</p>
+                  <div class="model-installed-status">
+                    <span class="installed-tag">✓ Built into macOS</span>
+                  </div>
+                </div>
+              </div>
+              <div class="model-box">
+                <div class="model-info">
+                  <div class="model-title-line">
+                    <span class="model-name">🔒 100% On-Device Privacy</span>
+                  </div>
+                  <p class="model-summary">Processes speech entirely offline on your Mac with zero external API keys or cloud dependencies.</p>
+                  <div class="model-installed-status">
+                    <span class="installed-tag">✓ Zero Network Requests</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="field-hint" style="margin-top: 10px;">
+              Apple Speech uses native macOS on-device dictation models. Ensure Dictation is enabled in macOS System Settings &gt; Keyboard &gt; Dictation.
+            </p>
+          </div>
+        }
+
+        <!-- NVIDIA Parakeet Panel -->
+        @if (sttProvider() === 'parakeet') {
+          <div class="whisper-panel">
+            <div class="whisper-status-bar">
+              <div class="status-indicator-box">
+                <span class="status-dot ready"></span>
+                <div>
+                  <strong>Engine Status: </strong>
+                  <span class="status-text ready">NVIDIA Parakeet Engine Active</span>
+                  <span class="status-detail">(FastConformer & Nemotron Architecture)</span>
+                </div>
+              </div>
+              <div class="binary-path-hint">
+                <code>100% On-Device Neural Speech Recognition</code>
               </div>
             </div>
 
-            <!-- Model Selection & Download Cards -->
-            <label class="form-label" style="margin-top: 14px;">Whisper GGML Models</label>
+            <!-- Parakeet / NeMo Model Cards Grid -->
+            <label class="form-label" style="margin-top: 14px;">QuestionLens — Transcription Models for NVIDIA Parakeet</label>
             <div class="model-cards-grid">
-              <!-- base.en -->
-              <div class="model-box" [class.selected]="whisperModel() === 'base.en'">
-                <div class="model-info">
-                  <div class="model-title-line">
-                    <span class="model-name">ggml-base.en.bin</span>
-                    <span class="model-badge">~142 MB</span>
-                  </div>
-                  <p class="model-summary">Recommended. High transcription accuracy with fast real-time latency.</p>
-                  <div class="model-installed-status">
-                    @if (whisperStatus()?.installedModels?.includes('base.en')) {
-                      <span class="installed-tag">✓ Ready to use</span>
-                    } @else {
-                      <span class="missing-tag">Not installed</span>
-                    }
-                  </div>
-                </div>
-                <div class="model-actions">
-                  @if (whisperStatus()?.installedModels?.includes('base.en')) {
-                    <button
-                      type="button"
-                      class="btn-secondary btn-sm"
-                      [class.btn-active-model]="whisperModel() === 'base.en'"
-                      (click)="whisperModel.set('base.en')"
-                    >
-                      {{ whisperModel() === 'base.en' ? 'Active Model' : 'Select Model' }}
-                    </button>
-                  } @else {
-                    <button
-                      type="button"
-                      class="btn-primary btn-sm"
-                      [disabled]="isDownloadingWhisper()"
-                      (click)="downloadWhisperModel('base.en')"
-                    >
-                      Download (142MB)
-                    </button>
-                  }
-                </div>
-              </div>
+              @for (m of parakeetModelsList; track m.id) {
+                <div class="model-box" [class.selected]="parakeetModel() === m.id">
+                  <div class="model-info">
+                    <div class="model-title-line">
+                      <span class="model-name">
+                        <span class="model-icon">{{ m.icon }}</span> {{ m.name }}
+                      </span>
+                      <div class="model-meta-badges">
+                        <span class="model-ram-badge" title="Memory required for model execution">{{ m.ramRequirement }}</span>
+                        <span class="model-badge">{{ m.badge }}</span>
+                      </div>
+                    </div>
+                    <div class="model-subtitle-line">{{ m.subtitle }}</div>
+                    <p class="model-summary">{{ m.description }}</p>
 
-              <!-- tiny.en -->
-              <div class="model-box" [class.selected]="whisperModel() === 'tiny.en'">
-                <div class="model-info">
-                  <div class="model-title-line">
-                    <span class="model-name">ggml-tiny.en.bin</span>
-                    <span class="model-badge">~75 MB</span>
+                    <div class="model-installed-status">
+                      @if (parakeetStatus()?.installedModels?.includes(m.id)) {
+                        <span class="installed-tag">✓ Ready to use • {{ m.fileSizeStr }}</span>
+                      } @else {
+                        <span class="missing-tag">Not installed ({{ m.fileSizeStr }})</span>
+                      }
+                    </div>
+
+                    <!-- In-Card Download Progress Bar -->
+                    @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
+                      <div class="card-download-progress">
+                        <div class="card-progress-header">
+                          <span class="progress-title">Downloading {{ m.name }}...</span>
+                          <span class="progress-stats">
+                            {{ parakeetDownloadProgress()?.downloadedMb }} MB / {{ parakeetDownloadProgress()?.totalMb }} MB ({{ parakeetDownloadProgress()?.percent }}%)
+                          </span>
+                        </div>
+                        <div class="progress-track">
+                          <div class="progress-fill" [style.width.%]="parakeetDownloadProgress()?.percent"></div>
+                        </div>
+                      </div>
+                    }
                   </div>
-                  <p class="model-summary">Fastest inference and lowest memory footprint.</p>
-                  <div class="model-installed-status">
-                    @if (whisperStatus()?.installedModels?.includes('tiny.en')) {
-                      <span class="installed-tag">✓ Ready to use</span>
+
+                  <div class="model-actions">
+                    @if (parakeetStatus()?.installedModels?.includes(m.id)) {
+                      <button
+                        type="button"
+                        class="btn-secondary btn-sm"
+                        [class.btn-active-model]="parakeetModel() === m.id"
+                        (click)="onParakeetModelSelect(m.id)"
+                      >
+                        {{ parakeetModel() === m.id ? 'Active Model' : 'Select Model' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-delete btn-sm"
+                        title="Delete {{ m.name }} model to free disk space"
+                        (click)="deleteParakeetModel(m.id)"
+                      >
+                        🗑️ Delete
+                      </button>
                     } @else {
-                      <span class="missing-tag">Not installed</span>
+                      <button
+                        type="button"
+                        class="btn-primary btn-sm"
+                        [disabled]="isDownloadingParakeet()"
+                        (click)="downloadParakeetModel(m.id)"
+                      >
+                        @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
+                          Downloading ({{ parakeetDownloadProgress()?.percent }}%)...
+                        } @else {
+                          Download ({{ m.fileSizeStr }})
+                        }
+                      </button>
                     }
                   </div>
                 </div>
-                <div class="model-actions">
-                  @if (whisperStatus()?.installedModels?.includes('tiny.en')) {
-                    <button
-                      type="button"
-                      class="btn-secondary btn-sm"
-                      [class.btn-active-model]="whisperModel() === 'tiny.en'"
-                      (click)="whisperModel.set('tiny.en')"
-                    >
-                      {{ whisperModel() === 'tiny.en' ? 'Active Model' : 'Select Model' }}
-                    </button>
-                  } @else {
-                    <button
-                      type="button"
-                      class="btn-primary btn-sm"
-                      [disabled]="isDownloadingWhisper()"
-                      (click)="downloadWhisperModel('tiny.en')"
-                    >
-                      Download (75MB)
-                    </button>
-                  }
-                </div>
-              </div>
+              }
             </div>
 
-            <!-- Download Progress Bar -->
-            @if (isDownloadingWhisper() && whisperDownloadProgress(); as prog) {
+            <!-- Parakeet Download Progress Bar (Global fallback) -->
+            @if (isDownloadingParakeet() && parakeetDownloadProgress(); as prog) {
               <div class="download-progress-container">
                 <div class="progress-header">
-                  <span>Downloading ggml-{{ prog.model }}.bin...</span>
+                  <span>Downloading NVIDIA Parakeet ({{ prog.model }})...</span>
                   <span>{{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)</span>
                 </div>
                 <div class="progress-track">
@@ -436,6 +490,9 @@
                 </div>
               </div>
             }
+            <p class="field-hint" style="margin-top: 10px;">
+              Parakeet models run via local ONNX Runtime / NeMo FastConformer engine. Audio is captured at 16 kHz and streamed directly to the Parakeet engine.
+            </p>
           </div>
         }
 
@@ -583,7 +640,7 @@
             <div class="slider-header">
               <div class="vad-title-wrap">
                 <strong>VAD Silence Gate Threshold: </strong>
-                <span class="field-hint-inline">Audio below this RMS volume is dropped before Whisper</span>
+                <span class="field-hint-inline">Audio below this RMS volume is dropped before speech recognition</span>
               </div>
               <span class="slider-value-badge vad-badge">{{ vadSensitivity() }} RMS</span>
             </div>
@@ -650,20 +707,6 @@
               </label>
             </div>
 
-            <div class="toggle-card" (click)="toggleWhisperPromptPriming()">
-              <div class="toggle-card-info">
-                <span class="toggle-card-title">Whisper Context Priming</span>
-                <span class="toggle-card-desc">Injects technical meeting vocabulary prompt into Whisper to prevent hallucinations</span>
-              </div>
-              <label class="toggle-switch" (click)="$event.stopPropagation()">
-                <input
-                  type="checkbox"
-                  [checked]="whisperPromptPriming()"
-                  (change)="toggleWhisperPromptPriming()"
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
           </div>
         </div>
 
@@ -761,18 +804,33 @@
             [value]="sttProvider()"
             (change)="onSttProviderChange($event)"
           >
-            <option value="local-whisper">Local Whisper (Free, Apple Silicon Metal GPU, 100% Private)</option>
-            <option value="simulation">Meeting Dialogue Simulation (Offline / Dev)</option>
-            <option value="deepgram">Deepgram WebSocket Streaming (Live Loopback Audio)</option>
+            <option value="parakeet">NVIDIA Parakeet (FastConformer & Nemotron) [Recommended]</option>
+            <option value="apple-speech">Apple Speech (Native macOS Dictation & Neural Engine)</option>
           </select>
           <span class="field-hint">
-            Deepgram requires a valid API key configured in the API Keys tab.
+            All speech-to-text engines operate 100% on-device.
           </span>
+
+          <!-- STT Engine Model Download Requirement Status Card -->
+          <div
+            class="stt-download-requirement-card"
+            [class.no-download]="sttRequirement().badgeType === 'no-download'"
+            [class.ready]="sttRequirement().badgeType === 'ready'"
+            [class.download-needed]="sttRequirement().badgeType === 'download-needed'"
+          >
+            <div class="requirement-header-row">
+              <span class="requirement-badge" [attr.data-type]="sttRequirement().badgeType">
+                {{ sttRequirement().badgeLabel }}
+              </span>
+              <span class="requirement-model-name">{{ sttRequirement().modelName }}</span>
+            </div>
+            <p class="requirement-message">{{ sttRequirement().message }}</p>
+          </div>
         </div>
 
         <!-- STT Language (Milestone 7) -->
         <div class="form-group">
-          <label for="stt-language" class="form-label">Audio Language Model</label>
+          <label for="stt-language" class="form-label">Speech Recognition Language</label>
           <select
             id="stt-language"
             class="form-select"
@@ -784,7 +842,7 @@
             <option value="multi">Multilingual / Automatic Detection (Hinglish, Code-switching)</option>
           </select>
           <span class="field-hint">
-            Configures Deepgram nova-2 streaming language detection and speaker diarization.
+            Configures local speech recognition language detection and vocabulary model.
           </span>
         </div>
 
@@ -1442,38 +1500,6 @@
             Never shared or stored unencrypted. Leave blank to retain currently saved key.
           </span>
         </div>
-
-        <!-- Deepgram API Key -->
-        <div class="form-group">
-          <div class="label-row">
-            <label for="deepgram-key" class="form-label">Deepgram API Key</label>
-            @if (hasDeepgramKey()) {
-              <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
-            } @else {
-              <span class="key-status-pill empty">No Key Configured</span>
-            }
-          </div>
-          <div class="key-input-row">
-            <input
-              id="deepgram-key"
-              [type]="showDeepgramKey() ? 'text' : 'password'"
-              class="form-input mono"
-              placeholder="Token for live loopback audio transcription"
-              [value]="deepgramKeyInput()"
-              (input)="onDeepgramKeyChange($event)"
-            />
-            <button
-              type="button"
-              class="btn-secondary toggle-key-btn"
-              (click)="showDeepgramKey.set(!showDeepgramKey())"
-            >
-              {{ showDeepgramKey() ? 'Hide' : 'Show' }}
-            </button>
-          </div>
-          <span class="field-hint">
-            Used for 16 kHz WebSocket streaming transcription during live calls.
-          </span>
-        </div>
       </section>
     }
 
@@ -1628,9 +1654,9 @@
           <div class="privacy-content">
             <h3>Third-Party API Disclosures</h3>
             <p>
-              When using Deepgram or Anthropic Claude, text segments and question prompts are sent to their
-              respective APIs via secure TLS. When using local simulation engines, zero network traffic leaves
-              your device.
+              When using Anthropic Claude for AI answer synthesis, prompt text is sent to Anthropic's API
+              via secure TLS. All Speech-to-Text transcription (NVIDIA Parakeet, Apple Speech) runs
+              100% on-device with zero audio or speech data leaving your computer.
             </p>
           </div>
         </div>

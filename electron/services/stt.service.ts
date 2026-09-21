@@ -1,13 +1,22 @@
-import { TranscriptSegment, AudioChunkPayload, TranscriptionMode } from '@shared/ipc';
-import { WhisperService } from './whisper.service';
+import {
+  TranscriptSegment,
+  AudioChunkPayload,
+  TranscriptionMode,
+  AudioFrame,
+  STTEngineInfo,
+  STTEngineType,
+  AppSettings,
+  ParakeetModelType,
+} from '@shared/ipc';
+import { ISTTEngine, STTEngineOptions } from './stt/stt-engine.interface';
+import { AppleSpeechEngine } from './stt/apple-speech-engine';
+import { ParakeetEngine } from './stt/parakeet-engine';
+import { TranscriptManager } from './transcript-manager';
 
-export interface SttOptions {
-  provider?: 'deepgram' | 'simulation' | 'local-whisper';
-  apiKey?: string;
-  language?: 'en' | 'hi' | 'multi';
+export interface SttOptions extends STTEngineOptions {
+  provider?: STTEngineType;
   diarize?: boolean;
-  transcriptionMode?: TranscriptionMode;
-  whisperModel?: string;
+  parakeetModel?: ParakeetModelType;
 }
 
 export interface ISttService {
@@ -15,62 +24,69 @@ export interface ISttService {
   stop(): Promise<void>;
   feedAudio(chunk: AudioChunkPayload): void;
   getProviderName(): string;
+  getModelName(): string;
   isActive(): boolean;
   isConnected(): boolean;
+  getEngines(): STTEngineInfo[];
+  setEngine(engineId: STTEngineType): Promise<void>;
+  applySettings(settings: AppSettings): Promise<void>;
 }
-
-const SIMULATED_MEETING_TRANSCRIPTS = [
-  "Good morning team, let's start today's architectural sync.",
-  "First topic on the agenda: the payment service retry logic.",
-  "How does the retry logic and exponential backoff work in the payment flow?",
-  "We noticed some 504 gateway timeouts during the peak traffic spike yesterday.",
-  "Right, we have three retries with jittered backoff, capping at four seconds.",
-  "Next item: what's the rollout schedule and canary plan for the v2 migration?",
-  "Phase one is already at 100 percent in staging, and ten percent canary goes live Tuesday.",
-  "What is the fallback mechanism if the external KYC verification provider times out?",
-  "We queue the verification in async background mode with a two minute SLA.",
-  "Can you explain the difference in p99 database latency after the Redis caching update?",
-  "The query latency dropped from 340 milliseconds down to 42 milliseconds on read replicas.",
-  "Any questions on security or token storage before we wrap up?",
-];
 
 export class SttService implements ISttService {
   private active = false;
-  private connected = false;
+  private currentEngineId: STTEngineType = 'parakeet';
+  private transcriptionMode: TranscriptionMode = 'everyone';
   private onSegmentCallback: ((segment: TranscriptSegment) => void) | null = null;
-  private ws: WebSocket | null = null;
-  private providerName = 'Local Whisper (Apple Silicon Metal)';
-  private sessionStartTime = 0;
-  private simTimer: NodeJS.Timeout | null = null;
-  private simIndex = 0;
-  private retryCount = 0;
-  private maxRetries = 4;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private currentOptions: SttOptions = {};
+  private transcriptUnsubscribe: (() => void) | null = null;
 
-  readonly whisperService = new WhisperService();
-  private currentProvider: 'deepgram' | 'simulation' | 'local-whisper' = 'local-whisper';
-  private transcriptionMode: TranscriptionMode = 'other-only';
+  readonly transcriptManager = new TranscriptManager();
+  private engines: Map<STTEngineType, ISTTEngine> = new Map();
+  private activeEngine: ISTTEngine;
+
+  readonly appleSpeechEngine = new AppleSpeechEngine();
+  readonly parakeetEngine = new ParakeetEngine();
 
   constructor() {
-    // If whisper-cli is available, prefer local-whisper by default for free private transcription
-    if (this.whisperService.getStatus().available) {
-      this.providerName = 'Local Whisper (Apple Silicon Metal)';
-      this.currentProvider = 'local-whisper';
-    } else if (process.env.DEEPGRAM_API_KEY) {
-      this.providerName = 'Deepgram Streaming';
-      this.currentProvider = 'deepgram';
-    } else {
-      this.providerName = 'Local Meeting STT Simulator';
-      this.currentProvider = 'simulation';
-    }
+    this.engines.set('parakeet', this.parakeetEngine);
+    this.engines.set('apple-speech', this.appleSpeechEngine);
+
+    // Default to NVIDIA Parakeet
+    this.currentEngineId = 'parakeet';
+    this.activeEngine = this.parakeetEngine;
+  }
+
+  getEngines(): STTEngineInfo[] {
+    return [
+      this.parakeetEngine.getStatus(),
+      this.appleSpeechEngine.getStatus(),
+    ];
   }
 
   getProviderName(): string {
-    return this.providerName;
+    switch (this.currentEngineId) {
+      case 'apple-speech':
+        return 'Apple Speech';
+      case 'parakeet':
+        return 'NVIDIA Parakeet';
+      default:
+        return this.activeEngine ? this.activeEngine.name : 'NVIDIA Parakeet';
+    }
   }
 
-  getCurrentProvider(): 'deepgram' | 'simulation' | 'local-whisper' {
-    return this.currentProvider;
+  getModelName(): string {
+    switch (this.currentEngineId) {
+      case 'parakeet':
+        return this.parakeetEngine.getCurrentModelDisplayName();
+      case 'apple-speech':
+        return 'macOS Neural Engine';
+      default:
+        return '';
+    }
+  }
+
+  getCurrentProvider(): STTEngineType {
+    return this.currentEngineId;
   }
 
   isActive(): boolean {
@@ -78,10 +94,7 @@ export class SttService implements ISttService {
   }
 
   isConnected(): boolean {
-    if (this.currentProvider === 'local-whisper') {
-      return this.active && this.whisperService.isActive();
-    }
-    return this.connected || (this.active && !this.ws);
+    return this.active && this.activeEngine ? this.activeEngine.isConnected() : false;
   }
 
   setTranscriptionMode(mode: TranscriptionMode): void {
@@ -93,66 +106,134 @@ export class SttService implements ISttService {
     return this.transcriptionMode;
   }
 
+  async setEngine(engineId: STTEngineType): Promise<void> {
+    const normalizedId: STTEngineType = engineId === 'local-whisper' ? 'whisper' : engineId;
+    if (this.currentEngineId === normalizedId) return;
+
+    console.log(`[SttService] Switching STT engine from ${this.currentEngineId} to ${normalizedId}`);
+    const wasActive = this.active;
+
+    if (wasActive) {
+      await this.stop();
+    }
+
+    const nextEngine = this.engines.get(normalizedId);
+    if (!nextEngine) {
+      console.warn(`[SttService] Unknown engine ${engineId}, defaulting to parakeet`);
+      this.activeEngine = this.parakeetEngine;
+      this.currentEngineId = 'parakeet';
+    } else {
+      this.activeEngine = nextEngine;
+      this.currentEngineId = normalizedId;
+    }
+
+    if (wasActive && this.onSegmentCallback) {
+      await this.start(this.onSegmentCallback, this.currentOptions);
+    }
+  }
+
   async start(onSegment: (segment: TranscriptSegment) => void, options: SttOptions = {}): Promise<void> {
-    if (this.active) return;
-    this.active = true;
     this.onSegmentCallback = onSegment;
-    this.sessionStartTime = Date.now();
-    this.retryCount = 0;
+    this.currentOptions = options;
 
     if (options.transcriptionMode) {
       this.transcriptionMode = options.transcriptionMode;
     }
 
-    const provider = options.provider || (this.whisperService.getStatus().available ? 'local-whisper' : 'simulation');
-    this.currentProvider = provider;
-
-    if (provider === 'local-whisper') {
-      this.providerName = 'Local Whisper (Apple Silicon Metal)';
-      this.connected = true;
-      await this.whisperService.start(onSegment, {
-        model: options.whisperModel || 'base.en',
-      });
-      return;
+    if (options.provider) {
+      const selected = this.engines.get(options.provider);
+      if (selected) {
+        this.activeEngine = selected;
+        this.currentEngineId = options.provider;
+      }
     }
 
-    const apiKey = options.apiKey || process.env.DEEPGRAM_API_KEY;
-    if (provider === 'deepgram' && apiKey) {
-      this.providerName = 'Deepgram WebSocket';
-      this.connectDeepgram(apiKey, options);
-    } else {
-      this.providerName = 'Local Meeting STT (Simulation Mode)';
-      this.connected = true;
-      this.startSimulationStream();
+    if (options.parakeetModel) {
+      await this.parakeetEngine.setModel(options.parakeetModel);
+    }
+
+    this.active = true;
+
+    // Connect TranscriptManager to emit to the caller (main.ts handleTranscriptSegment)
+    if (this.transcriptUnsubscribe) {
+      this.transcriptUnsubscribe();
+      this.transcriptUnsubscribe = null;
+    }
+    this.transcriptManager.clear();
+    this.transcriptUnsubscribe = this.transcriptManager.subscribe((segment) => {
+      onSegment(segment);
+    });
+
+    console.log(`[SttService] Starting active engine: ${this.activeEngine.name}`);
+    await this.activeEngine.start((segment) => {
+      this.transcriptManager.emit(segment);
+    }, options);
+  }
+
+  async applySettings(settings: AppSettings): Promise<void> {
+    const nextEngineId: STTEngineType = settings.sttProvider || this.currentEngineId;
+    const providerChanged = this.currentEngineId !== nextEngineId;
+
+    let modelChanged = false;
+    if (settings.parakeetModel) {
+      const prevP = this.parakeetEngine.getCurrentModel();
+      await this.parakeetEngine.setModel(settings.parakeetModel);
+      if (prevP !== settings.parakeetModel && nextEngineId === 'parakeet') {
+        modelChanged = true;
+      }
+    }
+
+    if (settings.transcriptionMode) {
+      this.transcriptionMode = settings.transcriptionMode;
+    }
+
+    const wasActive = this.active;
+
+    if (providerChanged) {
+      console.log(`[SttService] Switching engine from ${this.currentEngineId} to ${nextEngineId}`);
+      if (wasActive) {
+        await this.stop();
+      }
+      const nextEngine = this.engines.get(nextEngineId);
+      if (nextEngine) {
+        this.activeEngine = nextEngine;
+        this.currentEngineId = nextEngineId;
+      }
+      if (wasActive && this.onSegmentCallback) {
+        await this.start(this.onSegmentCallback, {
+          ...this.currentOptions,
+          provider: nextEngineId,
+          parakeetModel: settings.parakeetModel,
+          transcriptionMode: settings.transcriptionMode,
+        });
+      }
+    } else if (modelChanged && wasActive && this.onSegmentCallback) {
+      console.log(`[SttService] Model changed for active engine ${this.currentEngineId}, restarting with new model`);
+      await this.activeEngine.stop();
+      await this.activeEngine.start((segment) => {
+        this.transcriptManager.emit(segment);
+      }, {
+        ...this.currentOptions,
+        parakeetModel: settings.parakeetModel,
+        transcriptionMode: settings.transcriptionMode,
+      });
     }
   }
 
   async stop(): Promise<void> {
     this.active = false;
-    this.connected = false;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+    if (this.transcriptUnsubscribe) {
+      this.transcriptUnsubscribe();
+      this.transcriptUnsubscribe = null;
     }
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {
-        // ignore on close
-      }
-      this.ws = null;
+    if (this.activeEngine) {
+      await this.activeEngine.stop();
     }
-    if (this.simTimer) {
-      clearTimeout(this.simTimer);
-      this.simTimer = null;
-    }
-
-    await this.whisperService.stop();
-    this.onSegmentCallback = null;
+    this.transcriptManager.clear();
   }
 
   feedAudio(chunk: AudioChunkPayload): void {
-    if (!this.active) return;
+    if (!this.active || !this.activeEngine) return;
 
     let channel: 'system' | 'mic' = 'system';
     let buffer: ArrayBuffer;
@@ -164,145 +245,25 @@ export class SttService implements ISttService {
       buffer = chunk as ArrayBuffer;
     }
 
-    // Mode A (Other Participant Only): Mute/ignore microphone channel completely!
+    // In other-only mode, strictly ignore microphone audio
     if (this.transcriptionMode === 'other-only' && channel === 'mic') {
       return;
     }
 
-    if (this.currentProvider === 'local-whisper') {
-      this.whisperService.feedPcmChunk(buffer, channel);
-      return;
-    }
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(buffer);
-      } catch (err) {
-        console.warn('[SttService] Error sending audio chunk to WebSocket:', err);
-      }
-    }
-  }
-
-  private connectDeepgram(apiKey: string, options: SttOptions = {}): void {
-    if (!this.active) return;
-
-    const lang = options.language === 'hi' ? 'hi' : options.language === 'multi' ? 'multi' : 'en-US';
-    const diarizeParam = options.diarize !== false ? '&diarize=true' : '';
-    const langParam = options.language === 'multi' ? '&detect_language=true' : `&language=${lang}`;
-
-    const url =
-      `wss://api.deepgram.com/v1/listen?encoding=linear16&sample_rate=16000&channels=1&interim_results=true&punctuate=true&endpointing=300${diarizeParam}${langParam}`;
-
-    try {
-      this.ws = new WebSocket(url, {
-        headers: {
-          Authorization: `Token ${apiKey}`,
-        },
-      } as unknown as string[]);
-
-      this.ws.onopen = () => {
-        console.log('[SttService] Connected to Deepgram streaming WebSocket.');
-        this.connected = true;
-        this.retryCount = 0;
-      };
-
-      this.ws.onmessage = (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data.toString());
-          const alt = data?.channel?.alternatives?.[0];
-          const transcript = alt?.transcript?.trim();
-          const isFinal = Boolean(data?.is_final);
-
-          if (transcript && this.onSegmentCallback) {
-            const now = Date.now();
-            const segment: TranscriptSegment = {
-              id: `seg-${now}-${Math.random().toString(36).substring(2, 7)}`,
-              text: transcript,
-              isFinal,
-              startMs: Math.round(data.start * 1000) || now - this.sessionStartTime,
-              endMs: Math.round((data.start + data.duration) * 1000) || now - this.sessionStartTime + 500,
-              speaker: alt?.words?.[0]?.speaker ? `Speaker ${alt.words[0].speaker}` : undefined,
-            };
-            this.onSegmentCallback(segment);
-          }
-        } catch (err) {
-          console.warn('[SttService] Failed parsing Deepgram message:', err);
-        }
-      };
-
-      this.ws.onerror = (err) => {
-        console.warn('[SttService] Deepgram WebSocket error:', err);
-      };
-
-      this.ws.onclose = () => {
-        this.connected = false;
-        if (this.active) {
-          this.retryCount++;
-          if (this.retryCount <= this.maxRetries) {
-            const delay = Math.min(15000, 1000 * Math.pow(2, this.retryCount - 1) + Math.random() * 500);
-            console.log(`[SttService] WebSocket disconnected. Retry ${this.retryCount}/${this.maxRetries} in ${Math.round(delay)}ms...`);
-            this.reconnectTimer = setTimeout(() => {
-              if (this.active) this.connectDeepgram(apiKey);
-            }, delay);
-          } else {
-            console.warn('[SttService] Max retries reached, failing over to local Whisper.');
-            this.providerName = 'Local Whisper (Apple Silicon Metal)';
-            this.currentProvider = 'local-whisper';
-            this.whisperService.start(this.onSegmentCallback!);
-          }
-        }
-      };
-    } catch (err) {
-      console.warn('[SttService] WebSocket initialization failed, falling back to local Whisper:', err);
-      this.providerName = 'Local Whisper (Apple Silicon Metal)';
-      this.currentProvider = 'local-whisper';
-      this.whisperService.start(this.onSegmentCallback!);
-    }
-  }
-
-  private startSimulationStream(): void {
-    if (!this.active) return;
-    this.connected = true;
-
-    const fullSentence =
-      SIMULATED_MEETING_TRANSCRIPTS[this.simIndex % SIMULATED_MEETING_TRANSCRIPTS.length];
-    this.simIndex++;
-
-    const words = fullSentence.split(' ');
-    let currentWordIndex = 0;
-    const segmentId = `sim-${Date.now()}`;
-    const startMs = Date.now() - this.sessionStartTime;
-
-    const streamNextToken = () => {
-      if (!this.active) return;
-
-      currentWordIndex = Math.min(words.length, currentWordIndex + Math.floor(Math.random() * 2) + 1);
-      const partialText = words.slice(0, currentWordIndex).join(' ');
-      const isFinal = currentWordIndex >= words.length;
-
-      if (this.onSegmentCallback) {
-        const segment: TranscriptSegment = {
-          id: segmentId,
-          text: partialText,
-          isFinal,
-          startMs,
-          endMs: Date.now() - this.sessionStartTime,
-          speaker: 'Other',
-        };
-        this.onSegmentCallback(segment);
-      }
-
-      if (!isFinal) {
-        this.simTimer = setTimeout(streamNextToken, 250 + Math.random() * 200);
-      } else {
-        this.simTimer = setTimeout(() => {
-          if (this.active) {
-            this.startSimulationStream();
-          }
-        }, 3000 + Math.random() * 2000);
-      }
+    const frame: AudioFrame = {
+      channel,
+      buffer,
+      sampleRate: 16000,
+      timestamp: Date.now(),
     };
 
-    this.simTimer = setTimeout(streamNextToken, 800);
+    this.activeEngine.feedAudio(frame);
+  }
+
+  setPromptPriming(enabled: boolean): void {
+    if (this.activeEngine.setPromptPriming) {
+      this.activeEngine.setPromptPriming(enabled);
+    }
   }
 }

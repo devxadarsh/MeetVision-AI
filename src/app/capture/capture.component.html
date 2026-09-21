@@ -41,15 +41,6 @@
     >
       {{ isCapturing() ? 'Stop Capture' : 'Start Capture' }}
     </button>
-
-    <button
-      type="button"
-      class="btn secondary"
-      (click)="simulateAudioBurst()"
-      title="Simulate speech audio chunk for testing"
-    >
-      Simulate Audio Pulse
-    </button>
   </div>
 
   @if (errorMessage()) {

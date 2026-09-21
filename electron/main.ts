@@ -12,8 +12,9 @@ import {
   AppDiagnostics,
   TranscriptionMode,
   AudioChunkPayload,
-  WhisperStatus,
   MacosPermissions,
+  ParakeetStatus,
+  ParakeetModelType,
 } from '@shared/ipc';
 import { SttService } from './services/stt.service';
 import { QuestionDetector } from './services/detector.service';
@@ -334,17 +335,70 @@ function registerHotkeys(): void {
   });
 }
 
+function generateAnswerForQuestion(question: Question, mode: 'short' | 'detailed' | 'simple' = 'short'): void {
+  question.status = 'answering';
+  questionsMap.set(question.id, question);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, question);
+  }
+
+  const settings = storeService.getSettings();
+  const relevantSnippets = knowledgeService.retrieveRelevantSnippets(question.text);
+
+  llmService.generateAnswerStream(
+    question,
+    recentTranscript,
+    {
+      mode,
+      profile: storeService.getContextProfile(),
+      apiKey: storeService.getDecryptedAnthropicKey(),
+      model: settings.llmModel,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens,
+      knowledgeSnippets: relevantSnippets,
+    },
+    (chunk) => {
+      if (chunk.isFinal && question.answer) {
+        question.status = 'answered';
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.ANSWER_CHUNK, chunk);
+      }
+    }
+  );
+}
+
 async function handleTranscriptSegment(segment: TranscriptSegment): Promise<void> {
+  // If segment text is empty, do not forward or create empty rows
+  if (!segment.text || !segment.text.trim()) {
+    return;
+  }
+
   // 1. Broadcast segment to overlay for Live Transcript view
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPT_UPDATE, segment);
   }
 
-  // 2. On final segments, evaluate question detection and answer generation
+  // 2. On final segments, evaluate question detection and voice answer triggers
   if (segment.isFinal) {
     recentTranscript.push(segment.text);
     if (recentTranscript.length > 25) {
       recentTranscript.shift();
+    }
+
+    // Voice Trigger: When user says "give answer" / "give the answer" / "answer question"
+    const isGiveAnswer = /\b(give\s+answer|give\s+the\s+answer|answer\s+(the\s+)?question|answer\s+this|answer\s+that)\b/i.test(segment.text);
+    if (isGiveAnswer) {
+      const allQuestions = Array.from(questionsMap.values());
+      const targetQuestion =
+        [...allQuestions].reverse().find((q) => q.status === 'unanswered') ||
+        allQuestions[allQuestions.length - 1];
+
+      if (targetQuestion) {
+        console.log(`[Main] Voice trigger 'give answer' activated for question: "${targetQuestion.text}"`);
+        generateAnswerForQuestion(targetQuestion);
+      }
+      return;
     }
 
     const detectedQuestion = detector.evaluate(segment);
@@ -352,40 +406,17 @@ async function handleTranscriptSegment(segment: TranscriptSegment): Promise<void
       if (segment.speaker) {
         detectedQuestion.speaker = segment.speaker;
       }
+      detectedQuestion.status = 'unanswered';
       questionsMap.set(detectedQuestion.id, detectedQuestion);
       if (questionsMap.size > 50) {
         const oldestKey = questionsMap.keys().next().value;
         if (oldestKey) questionsMap.delete(oldestKey);
       }
 
-      // Emit new detected question to overlay
+      // Emit new detected question to overlay in 'unanswered' state (ready for answer)
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, detectedQuestion);
       }
-
-      // Retrieve top matching local knowledge base snippets (RAG)
-      const relevantSnippets = knowledgeService.retrieveRelevantSnippets(detectedQuestion.text);
-
-      // Stream LLM answer bullets tailored to context profile & knowledge docs
-      const settings = storeService.getSettings();
-      llmService.generateAnswerStream(
-        detectedQuestion,
-        recentTranscript,
-        {
-          mode: 'short',
-          profile: storeService.getContextProfile(),
-          apiKey: storeService.getDecryptedAnthropicKey(),
-          model: settings.llmModel,
-          temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
-          knowledgeSnippets: relevantSnippets,
-        },
-        (chunk) => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_CHANNELS.ANSWER_CHUNK, chunk);
-          }
-        }
-      );
     }
   }
 }
@@ -499,9 +530,8 @@ function registerIpcHandlers(): void {
     const settings = storeService.getSettings();
     await sttService.start(handleTranscriptSegment, {
       provider: settings.sttProvider,
-      whisperModel: settings.whisperModel,
+      parakeetModel: settings.parakeetModel,
       transcriptionMode: settings.transcriptionMode,
-      apiKey: storeService.getDecryptedDeepgramKey(),
       language: settings.sttLanguage,
       diarize: true,
     });
@@ -517,15 +547,18 @@ function registerIpcHandlers(): void {
     return {
       active: sttService.isActive(),
       provider: sttService.getProviderName(),
+      model: sttService.getModelName(),
+      engine: sttService.getProviderName(),
+      connected: sttService.isConnected(),
+      transcriptionMode: storeService.getTranscriptionMode(),
     };
   });
 
-  // Audio chunk from capture window
+  // Audio channels
   ipcMain.on(IPC_CHANNELS.AUDIO_CHUNK, (_event, chunk: AudioChunkPayload) => {
     sttService.feedAudio(chunk);
   });
 
-  // Audio energy level for meter
   ipcMain.on(IPC_CHANNELS.AUDIO_LEVEL, (_event, level: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.AUDIO_LEVEL, level);
@@ -534,7 +567,15 @@ function registerIpcHandlers(): void {
 
   // Clear transcript
   ipcMain.handle(IPC_CHANNELS.TRANSCRIPT_CLEAR, async () => {
-    recentTranscript.length = 0;
+    await sttService.stop();
+    const settings = storeService.getSettings();
+    await sttService.start(handleTranscriptSegment, {
+      provider: settings.sttProvider,
+      parakeetModel: settings.parakeetModel,
+      transcriptionMode: settings.transcriptionMode,
+      language: settings.sttLanguage,
+      diarize: true,
+    });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPT_CLEAR);
     }
@@ -546,29 +587,75 @@ function registerIpcHandlers(): void {
     async (_event, payload: RegeneratePayload) => {
       const question = questionsMap.get(payload.questionId);
       if (question) {
-        const settings = storeService.getSettings();
-        const relevantSnippets = knowledgeService.retrieveRelevantSnippets(question.text);
-        await llmService.generateAnswerStream(
-          question,
-          recentTranscript,
-          {
-            mode: payload.mode,
-            profile: storeService.getContextProfile(),
-            apiKey: storeService.getDecryptedAnthropicKey(),
-            model: settings.llmModel,
-            temperature: settings.temperature,
-            maxTokens: settings.maxTokens,
-            knowledgeSnippets: relevantSnippets,
-          },
-          (chunk) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send(IPC_CHANNELS.ANSWER_CHUNK, chunk);
-            }
-          }
-        );
+        generateAnswerForQuestion(question, payload.mode);
       }
     }
   );
+
+  // Answer Question (Voice / UI Manual Trigger)
+  ipcMain.handle(
+    IPC_CHANNELS.QUESTION_ANSWER,
+    async (_event, payload?: string | { questionId?: string; text?: string; speaker?: string }) => {
+      let targetQuestion: Question | undefined;
+      const questionId = typeof payload === 'string' ? payload : payload?.questionId;
+      const segmentText = typeof payload === 'object' ? payload?.text?.trim() : undefined;
+      const segmentSpeaker = typeof payload === 'object' ? payload?.speaker : undefined;
+
+      if (questionId) {
+        targetQuestion = questionsMap.get(questionId);
+      }
+
+      // If answering directly by transcript segment text and question not found in map
+      if (!targetQuestion && segmentText) {
+        for (const q of questionsMap.values()) {
+          if (q.text.trim().toLowerCase() === segmentText.toLowerCase()) {
+            targetQuestion = q;
+            break;
+          }
+        }
+        if (!targetQuestion) {
+          const newId = questionId || `q-seg-${Date.now()}`;
+          targetQuestion = {
+            id: newId,
+            sessionId: 'session-live',
+            text: segmentText,
+            speaker: segmentSpeaker || 'Speaker',
+            askedAt: Date.now(),
+            status: 'unanswered',
+          };
+          questionsMap.set(newId, targetQuestion);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, targetQuestion);
+          }
+        }
+      }
+
+      if (!targetQuestion) {
+        const allQuestions = Array.from(questionsMap.values());
+        targetQuestion =
+          [...allQuestions].reverse().find((q) => q.status === 'unanswered') ||
+          allQuestions[allQuestions.length - 1];
+      }
+
+      if (targetQuestion) {
+        generateAnswerForQuestion(targetQuestion);
+        return true;
+      }
+      return false;
+    }
+  );
+
+  // Session Reset (Clear active meeting questions, transcript, and context)
+  ipcMain.handle(IPC_CHANNELS.SESSION_RESET, async () => {
+    console.log('[Main] Resetting active meeting session');
+    questionsMap.clear();
+    recentTranscript.length = 0;
+    sttService.transcriptManager.clear();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPT_CLEAR);
+    }
+    return true;
+  });
 
   // Settings & Profile (Milestone 4)
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async () => {
@@ -577,14 +664,28 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
     const updated = storeService.updateSettings(newSettings);
-    if (typeof updated.whisperPromptPriming === 'boolean') {
-      sttService.whisperService.setPromptPriming(updated.whisperPromptPriming);
-    }
+    await sttService.applySettings(updated);
+
+    const activeModel = sttService.getModelName();
+    const activeProvider = sttService.getProviderName();
 
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send(IPC_CHANNELS.SETTINGS_CHANGED, updated);
       }
+    }
+
+    // Broadcast a system segment in the live transcript stream so user sees the exact model switch
+    if (sttService.isActive()) {
+      const modelLabel = activeModel ? `${activeProvider} • ${activeModel}` : activeProvider;
+      handleTranscriptSegment({
+        id: `model-switch-${Date.now()}`,
+        speaker: 'System',
+        text: `[Active Speech-to-Text Model: ${modelLabel}]`,
+        startMs: 0,
+        endMs: 0,
+        isFinal: true,
+      });
     }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -617,7 +718,9 @@ function registerIpcHandlers(): void {
     if (!sttService.isActive()) {
       const settings = storeService.getSettings();
       await sttService.start(handleTranscriptSegment, {
-        apiKey: storeService.getDecryptedDeepgramKey(),
+        provider: settings.sttProvider,
+        parakeetModel: settings.parakeetModel,
+        transcriptionMode: settings.transcriptionMode,
         language: settings.sttLanguage,
         diarize: true,
       });
@@ -709,30 +812,47 @@ function registerIpcHandlers(): void {
     }
   );
 
-  // Local Whisper Engine Status & Model Management
-  sttService.whisperService.onProgressCallback = (progress) => {
+  // NVIDIA Parakeet Engine Status & Model Management
+  sttService.parakeetEngine.onProgressCallback = (progress) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
-        win.webContents.send(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, progress);
+        win.webContents.send(IPC_CHANNELS.PARAKEET_DOWNLOAD_PROGRESS, progress);
       }
     }
   };
 
-  ipcMain.handle(IPC_CHANNELS.WHISPER_STATUS_GET, async (): Promise<WhisperStatus> => {
-    return sttService.whisperService.getStatus();
+  ipcMain.handle(IPC_CHANNELS.PARAKEET_STATUS_GET, async (): Promise<ParakeetStatus> => {
+    return sttService.parakeetEngine.getParakeetStatus();
   });
 
   ipcMain.handle(
-    IPC_CHANNELS.WHISPER_MODEL_DOWNLOAD,
-    async (_event, modelName: string): Promise<boolean> => {
+    IPC_CHANNELS.PARAKEET_MODEL_DOWNLOAD,
+    async (_event, modelId: ParakeetModelType): Promise<boolean> => {
       try {
-        return await sttService.whisperService.downloadModel(modelName);
+        return await sttService.parakeetEngine.downloadModel(modelId);
       } catch (err) {
-        console.warn('[Main] Whisper model download error:', err);
+        console.warn('[Main] Parakeet model download error:', err);
         throw err;
       }
     }
   );
+
+  ipcMain.handle(
+    IPC_CHANNELS.PARAKEET_MODEL_DELETE,
+    async (_event, modelId: ParakeetModelType): Promise<boolean> => {
+      try {
+        return sttService.parakeetEngine.deleteModel(modelId);
+      } catch (err) {
+        console.warn('[Main] Parakeet model delete error:', err);
+        throw err;
+      }
+    }
+  );
+
+  // Pluggable STT Engines
+  ipcMain.handle(IPC_CHANNELS.STT_ENGINES_GET, async () => {
+    return sttService.getEngines();
+  });
 
   // macOS Permissions
   ipcMain.handle(IPC_CHANNELS.MACOS_PERMISSIONS_GET, async (): Promise<MacosPermissions> => {
@@ -857,9 +977,8 @@ app.whenReady().then(() => {
     const settings = storeService.getSettings();
     sttService.start(handleTranscriptSegment, {
       provider: settings.sttProvider,
-      whisperModel: settings.whisperModel,
+      parakeetModel: settings.parakeetModel,
       transcriptionMode: settings.transcriptionMode,
-      apiKey: storeService.getDecryptedDeepgramKey(),
       language: settings.sttLanguage,
       diarize: true,
     });

@@ -14,10 +14,25 @@ import {
   AppDiagnostics,
   KnowledgeDoc,
   TranscriptionMode,
-  WhisperStatus,
-  WhisperDownloadProgress,
+  MeetingSummary,
   MacosPermissions,
+  STTEngineType,
+  STTEngineInfo,
+  ParakeetModelType,
+  ParakeetStatus,
+  ParakeetDownloadProgress,
 } from '@shared/ipc';
+
+export interface ParakeetModelCard {
+  id: ParakeetModelType;
+  name: string;
+  subtitle: string;
+  icon: string;
+  description: string;
+  ramRequirement: string;
+  fileSizeStr: string;
+  badge: string;
+}
 
 @Component({
   selector: 'app-settings',
@@ -64,18 +79,82 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly newGlossaryTerm = signal('');
 
   // Audio & Transcription Modes (Mode A: Other Only vs Mode B: Everyone)
-  readonly transcriptionMode = signal<TranscriptionMode>('other-only');
-  readonly sttProvider = signal<'deepgram' | 'simulation' | 'local-whisper'>('local-whisper');
+  readonly transcriptionMode = signal<TranscriptionMode>('everyone');
+  readonly sttProvider = signal<STTEngineType>('parakeet');
+  readonly sttEngines = signal<STTEngineInfo[]>([]);
   readonly sttLanguage = signal<'en' | 'hi' | 'multi'>('en');
-  readonly whisperModel = signal<string>('base.en');
+  readonly parakeetModel = signal<ParakeetModelType>('parakeet-flash');
   readonly meetingAudioDeviceId = signal<string>('');
   readonly micAudioDeviceId = signal<string>('');
   readonly audioInputDevices = signal<{ deviceId: string; label: string }[]>([]);
 
-  // Local Whisper Status & Model Manager
-  readonly whisperStatus = signal<WhisperStatus | null>(null);
-  readonly whisperDownloadProgress = signal<WhisperDownloadProgress | null>(null);
-  readonly isDownloadingWhisper = signal(false);
+  // NVIDIA Parakeet Status & Model Manager
+  readonly parakeetStatus = signal<ParakeetStatus | null>(null);
+  readonly parakeetDownloadProgress = signal<ParakeetDownloadProgress | null>(null);
+  readonly isDownloadingParakeet = signal(false);
+
+  readonly parakeetModelsList: ParakeetModelCard[] = [
+    {
+      id: 'parakeet-flash',
+      name: 'Parakeet Flash',
+      subtitle: 'Ultra-low latency · English',
+      icon: '⚡',
+      description: 'Ultra-low latency streaming FastConformer optimized for instantaneous live meeting subtitles.',
+      ramRequirement: '~2 GB RAM',
+      fileSizeStr: '~1.0 GB',
+      badge: 'Ultra Low Latency',
+    },
+    {
+      id: 'parakeet-tdt-v2',
+      name: 'Parakeet TDT v2',
+      subtitle: 'Balanced · English',
+      icon: '⚖️',
+      description: 'Next-generation FastConformer Token-and-Duration Transducer v2 for high-speed, high-accuracy English transcription.',
+      ramRequirement: '~2.5 GB RAM',
+      fileSizeStr: '~1.2 GB',
+      badge: 'Balanced English',
+    },
+    {
+      id: 'parakeet-tdt-v3',
+      name: 'Parakeet TDT v3',
+      subtitle: 'Multilingual · 25 languages',
+      icon: '🌍',
+      description: 'NVIDIA multilingual FastConformer-TDT v3. Transcribes multilingual, code-switching, and global meeting dialogue across 25+ languages.',
+      ramRequirement: '~3 GB RAM',
+      fileSizeStr: '~1.4 GB',
+      badge: '25 Languages',
+    },
+    {
+      id: 'parakeet-ctc-1.1b',
+      name: 'Parakeet CTC 1.1B',
+      subtitle: 'Maximum accuracy · Technical',
+      icon: '🎯',
+      description: 'NVIDIA flagship heavyweight FastConformer. Highest accuracy and best technical domain vocabulary recall.',
+      ramRequirement: '~4 GB RAM',
+      fileSizeStr: '~2.2 GB',
+      badge: 'Flagship 1.1B',
+    },
+    {
+      id: 'nemotron-speech-3.5',
+      name: 'Nemotron Speech 3.5',
+      subtitle: 'Enterprise · Technical',
+      icon: '🏢',
+      description: 'NVIDIA NeMo Nemotron Speech 3.5. Enterprise-grade hybrid ASR with advanced punctuation and technical vocabulary grounding.',
+      ramRequirement: '~4.5 GB RAM',
+      fileSizeStr: '~1.4 GB',
+      badge: 'Enterprise ASR',
+    },
+    {
+      id: 'nemotron-3.5-multilingual',
+      name: 'Nemotron 3.5 Multilingual',
+      subtitle: 'Multilingual · Code-switching',
+      icon: '🌍',
+      description: 'NVIDIA Nemotron 3.5 Multilingual. State-of-the-art multilingual model supporting 25+ languages and seamless code-switching.',
+      ramRequirement: '~5 GB RAM',
+      fileSizeStr: '~1.6 GB',
+      badge: 'Multilingual',
+    },
+  ];
 
   // macOS Permissions
   readonly macosPermissions = signal<MacosPermissions | null>(null);
@@ -89,7 +168,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly noiseSuppression = signal<boolean>(true);
   readonly echoCancellation = signal<boolean>(true);
   readonly autoGainControl = signal<boolean>(true);
-  readonly whisperPromptPriming = signal<boolean>(true);
 
   // LLM Signals
   readonly llmProvider = signal<'anthropic' | 'local'>('local');
@@ -104,38 +182,88 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly newDocContent = signal('');
   readonly isAddingDoc = signal(false);
 
-  // Key Signals (FR-60)
-  readonly hasAnthropicKey = signal(false);
-  readonly hasDeepgramKey = signal(false);
-  readonly isEncryptionAvailable = signal(true);
+  // Meeting Summary Signals (Milestone 7 / FR-50)
+  readonly isGeneratingSummary = signal(false);
+  readonly isExportingSummary = signal(false);
+  readonly latestSummary = signal<MeetingSummary | null>(null);
+
+  // API Key Form State
   readonly anthropicKeyInput = signal('');
-  readonly deepgramKeyInput = signal('');
+  readonly hasAnthropicKey = signal(false);
   readonly showAnthropicKey = signal(false);
-  readonly showDeepgramKey = signal(false);
-
-  // UI state
+  readonly isEncryptionAvailable = signal(true);
   readonly isSaving = signal(false);
-  readonly toastMessage = signal<string | null>(null);
-  readonly toastType = signal<'success' | 'info'>('success');
 
-  private unsubscribeDownloadProgress?: () => void;
+  // Toast State
+  readonly toastMessage = signal<string | null>(null);
+  readonly toastType = signal<'success' | 'error' | 'info'>('info');
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Cleanup references
+  private unsubscribeParakeetDownloadProgress?: () => void;
   private unsubscribeModeChanged?: () => void;
+
+  // Dynamic Speech-to-Text Model Download Requirement Evaluator
+  readonly sttRequirement = computed(() => {
+    const provider = this.sttProvider();
+    const parakeetM = this.parakeetModel();
+    const installedParakeet = this.parakeetStatus()?.installedModels || [];
+
+    if (provider === 'apple-speech') {
+      return {
+        needsDownload: false,
+        badgeType: 'no-download' as const,
+        badgeLabel: '✨ No Download Needed',
+        modelName: 'macOS Neural Engine (Native Dictation)',
+        modelSize: '0 MB',
+        ramRequirement: 'Built-in',
+        message: 'No download needed. Integrated directly into macOS Sonoma & Sequoia. Operates 100% on-device accelerated by the Apple Neural Engine (ANE) with zero external model downloads.',
+      };
+    }
+
+    const meta = this.parakeetModelsList.find((m) => m.id === parakeetM) || this.parakeetModelsList[0];
+    const isParakeetInstalled = installedParakeet.includes(meta.id);
+    if (isParakeetInstalled) {
+      return {
+        needsDownload: false,
+        badgeType: 'ready' as const,
+        badgeLabel: `✓ Model Ready (${meta.fileSizeStr})`,
+        modelName: meta.name,
+        modelSize: meta.fileSizeStr,
+        ramRequirement: meta.ramRequirement,
+        message: `NVIDIA Parakeet (${meta.name}) is installed locally (${meta.fileSizeStr} • ${meta.ramRequirement}). Ready for high-performance offline inference.`,
+      };
+    }
+
+    return {
+      needsDownload: true,
+      badgeType: 'download-needed' as const,
+      badgeLabel: `⬇️ Download Required (${meta.fileSizeStr})`,
+      modelName: meta.name,
+      modelSize: meta.fileSizeStr,
+      ramRequirement: meta.ramRequirement,
+      message: `Model download required before starting transcription: ${meta.name} (${meta.fileSizeStr} • ${meta.ramRequirement}). Click "Download Model" in the card below.`,
+    };
+  });
 
   async ngOnInit(): Promise<void> {
     await this.loadSettings();
-    await this.refreshWhisperStatus();
+    await this.loadSttEngines();
+    await this.refreshParakeetStatus();
     await this.refreshMacosPermissions();
     await this.enumerateAudioDevices();
 
-    this.unsubscribeDownloadProgress = this.ipcService.onWhisperDownloadProgress((progress) => {
-      this.whisperDownloadProgress.set(progress);
+    this.unsubscribeParakeetDownloadProgress = this.ipcService.onParakeetDownloadProgress((progress) => {
+      this.parakeetDownloadProgress.set(progress);
       if (progress.completed || progress.error) {
-        this.isDownloadingWhisper.set(false);
-        this.refreshWhisperStatus();
+        this.isDownloadingParakeet.set(false);
+        this.refreshParakeetStatus();
         if (progress.completed) {
-          this.showToast(`Whisper model ${progress.model} downloaded successfully!`, 'success');
+          const meta = this.parakeetModelsList.find((m) => m.id === progress.model);
+          const name = meta ? meta.name : progress.model;
+          this.showToast(`Parakeet model ${name} downloaded successfully!`, 'success');
         } else if (progress.error) {
-          this.showToast(`Model download error: ${progress.error}`, 'info');
+          this.showToast(`Parakeet download error: ${progress.error}`, 'info');
         }
       }
     });
@@ -146,8 +274,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    if (this.unsubscribeDownloadProgress) {
-      this.unsubscribeDownloadProgress();
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (this.unsubscribeParakeetDownloadProgress) {
+      this.unsubscribeParakeetDownloadProgress();
     }
     if (this.unsubscribeModeChanged) {
       this.unsubscribeModeChanged();
@@ -166,10 +295,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
 
     // Audio & STT Configuration
-    this.sttProvider.set(settings.sttProvider || 'local-whisper');
+    this.sttProvider.set(settings.sttProvider || 'parakeet');
     this.transcriptionMode.set(settings.transcriptionMode || 'everyone');
     this.sttLanguage.set(settings.sttLanguage || 'en');
-    this.whisperModel.set(settings.whisperModel || 'tiny.en');
+    if (settings.parakeetModel) this.parakeetModel.set(settings.parakeetModel);
     this.meetingAudioDeviceId.set(settings.meetingAudioDeviceId || '');
     this.micAudioDeviceId.set(settings.micAudioDeviceId || '');
 
@@ -182,7 +311,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (typeof settings.noiseSuppression === 'boolean') this.noiseSuppression.set(settings.noiseSuppression);
     if (typeof settings.echoCancellation === 'boolean') this.echoCancellation.set(settings.echoCancellation);
     if (typeof settings.autoGainControl === 'boolean') this.autoGainControl.set(settings.autoGainControl);
-    if (typeof settings.whisperPromptPriming === 'boolean') this.whisperPromptPriming.set(settings.whisperPromptPriming);
 
     // LLM Configuration
     this.llmProvider.set(settings.llmProvider || 'local');
@@ -192,7 +320,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
     // Key Statuses
     this.hasAnthropicKey.set(Boolean(settings.hasAnthropicKey));
-    this.hasDeepgramKey.set(Boolean(settings.hasDeepgramKey));
     this.isEncryptionAvailable.set(settings.isEncryptionAvailable !== false);
 
     // Overlay Dimensions & Transparency & Layout Mode
@@ -205,14 +332,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
     await this.loadKnowledgeDocs();
   }
 
-  async refreshWhisperStatus(): Promise<void> {
+  async loadSttEngines(): Promise<void> {
     try {
-      const status = await this.ipcService.getWhisperStatus();
-      this.whisperStatus.set(status);
+      const engines = await this.ipcService.getSttEngines();
+      this.sttEngines.set(engines);
     } catch (err) {
-      console.warn('[SettingsComponent] Failed to get Whisper status:', err);
+      console.warn('[SettingsComponent] Failed to load STT engines:', err);
     }
   }
+
 
   async refreshMacosPermissions(): Promise<void> {
     try {
@@ -262,25 +390,59 @@ export class SettingsComponent implements OnInit, OnDestroy {
     );
   }
 
-  async downloadWhisperModel(modelName: string): Promise<void> {
-    if (this.isDownloadingWhisper()) return;
+  async refreshParakeetStatus(): Promise<void> {
+    try {
+      const status = await this.ipcService.getParakeetStatus();
+      this.parakeetStatus.set(status);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to get Parakeet status:', err);
+    }
+  }
 
-    this.isDownloadingWhisper.set(true);
-    this.whisperDownloadProgress.set({
-      model: modelName,
+  async downloadParakeetModel(modelId: ParakeetModelType): Promise<void> {
+    if (this.isDownloadingParakeet()) return;
+
+    const meta = this.parakeetModelsList.find((m) => m.id === modelId) || this.parakeetModelsList[0];
+    const totalMb = modelId === 'parakeet-ctc-1.1b'
+      ? 2200
+      : modelId === 'nemotron-3.5-multilingual'
+        ? 1600
+        : modelId === 'nemotron-speech-3.5' || modelId === 'parakeet-tdt-v3'
+          ? 1400
+          : modelId === 'parakeet-tdt-v2'
+            ? 1200
+            : 1000;
+
+    this.isDownloadingParakeet.set(true);
+    this.parakeetDownloadProgress.set({
+      model: modelId,
       percent: 0,
       downloadedMb: 0,
-      totalMb: modelName.includes('base') ? 142 : 75,
+      totalMb,
       completed: false,
     });
 
     try {
-      this.showToast(`Starting download of model: ggml-${modelName}.bin...`, 'info');
-      await this.ipcService.downloadWhisperModel(modelName);
+      this.showToast(`Starting download for ${meta.name} (${meta.fileSizeStr})...`, 'info');
+      await this.ipcService.downloadParakeetModel(modelId);
     } catch (err: unknown) {
-      this.isDownloadingWhisper.set(false);
+      this.isDownloadingParakeet.set(false);
       const msg = err instanceof Error ? err.message : String(err);
-      this.showToast(`Failed downloading model: ${msg}`, 'info');
+      this.showToast(`Failed downloading Parakeet model: ${msg}`, 'info');
+    }
+  }
+
+  async deleteParakeetModel(modelId: ParakeetModelType): Promise<void> {
+    try {
+      const ok = await this.ipcService.deleteParakeetModel(modelId);
+      await this.refreshParakeetStatus();
+      if (ok) {
+        this.showToast(`Parakeet model ${modelId} deleted successfully.`, 'info');
+      } else {
+        this.showToast(`Parakeet model ${modelId} was not found.`, 'info');
+      }
+    } catch {
+      this.showToast('Failed to delete Parakeet model.', 'info');
     }
   }
 
@@ -353,7 +515,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   onSttProviderChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
-    this.sttProvider.set(target.value as 'deepgram' | 'simulation' | 'local-whisper');
+    this.sttProvider.set(target.value as STTEngineType);
   }
 
   onSttLanguageChange(event: Event): void {
@@ -361,9 +523,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.sttLanguage.set(target.value as 'en' | 'hi' | 'multi');
   }
 
-  onWhisperModelChange(event: Event): void {
-    const target = event.target as HTMLSelectElement;
-    this.whisperModel.set(target.value);
+  onParakeetModelSelect(model: ParakeetModelType): void {
+    this.parakeetModel.set(model);
+    this.sttProvider.set('parakeet');
   }
 
   onMeetingDeviceChange(event: Event): void {
@@ -399,11 +561,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
   onAnthropicKeyChange(event: Event): void {
     const target = event.target as HTMLInputElement;
     this.anthropicKeyInput.set(target.value);
-  }
-
-  onDeepgramKeyChange(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    this.deepgramKeyInput.set(target.value);
   }
 
   onOverlayWidthChange(event: Event): void {
@@ -495,7 +652,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       sttProvider: this.sttProvider(),
       transcriptionMode: this.transcriptionMode(),
       sttLanguage: this.sttLanguage(),
-      whisperModel: this.whisperModel(),
+      parakeetModel: this.parakeetModel(),
       meetingAudioDeviceId: this.meetingAudioDeviceId() || undefined,
       micAudioDeviceId: this.micAudioDeviceId() || undefined,
       llmProvider: this.llmProvider(),
@@ -515,7 +672,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
       noiseSuppression: this.noiseSuppression(),
       echoCancellation: this.echoCancellation(),
       autoGainControl: this.autoGainControl(),
-      whisperPromptPriming: this.whisperPromptPriming(),
       profile: {
         role: this.role(),
         projectSummary: this.projectSummary(),
@@ -527,16 +683,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (this.anthropicKeyInput().trim().length > 0) {
       payload.anthropicApiKey = this.anthropicKeyInput().trim();
     }
-    if (this.deepgramKeyInput().trim().length > 0) {
-      payload.deepgramApiKey = this.deepgramKeyInput().trim();
-    }
 
     try {
       const updated = await this.ipcService.setSettings(payload);
       this.hasAnthropicKey.set(Boolean(updated.hasAnthropicKey));
-      this.hasDeepgramKey.set(Boolean(updated.hasDeepgramKey));
       this.anthropicKeyInput.set('');
-      this.deepgramKeyInput.set('');
       this.showToast('Settings, audio routing, and context profile saved successfully!', 'success');
     } catch {
       this.showToast('Failed to save settings.', 'info');
@@ -552,9 +703,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
       'Leading core payments and distributed ledger migration. Zero downtime, strict idempotency, resilient circuit breaker patterns.'
     );
     this.glossary.set(['idempotency', 'jitter', 'canary rollout', 'circuit breaker', 'ledger', 'p99 latency']);
-    this.sttProvider.set('local-whisper');
+    this.sttProvider.set('parakeet');
     this.transcriptionMode.set('everyone');
-    this.whisperModel.set('tiny.en');
+    this.parakeetModel.set('parakeet-flash');
     this.sttLanguage.set('en');
     this.voiceFilterEnabled.set(true);
     this.voiceLowCutHz.set(120);
@@ -564,7 +715,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.noiseSuppression.set(true);
     this.echoCancellation.set(true);
     this.autoGainControl.set(true);
-    this.whisperPromptPriming.set(true);
     this.llmProvider.set('local');
     this.llmModel.set('claude-3-5-sonnet-20241022');
     this.temperature.set(0.3);
@@ -634,10 +784,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.autoGainControl.update((v) => !v);
   }
 
-  toggleWhisperPromptPriming(): void {
-    this.whisperPromptPriming.update((v) => !v);
-  }
-
   async purgeAllData(): Promise<void> {
     if (
       typeof window !== 'undefined' &&
@@ -662,7 +808,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (tab === 'diagnostics') {
       await this.refreshDiagnostics();
     } else if (tab === 'audio') {
-      await this.refreshWhisperStatus();
+      await this.refreshParakeetStatus();
       await this.refreshMacosPermissions();
       await this.enumerateAudioDevices();
     }

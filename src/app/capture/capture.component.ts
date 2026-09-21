@@ -29,13 +29,13 @@ export class CaptureComponent implements OnInit, OnDestroy {
   readonly sourceName = signal('System Loopback / Mic');
   readonly audioLevel = signal(0);
   readonly errorMessage = signal<string | null>(null);
-  readonly transcriptionMode = signal<TranscriptionMode>('other-only');
+  readonly transcriptionMode = signal<TranscriptionMode>('everyone');
   readonly meetingAudioActive = signal(false);
   readonly micAudioActive = signal(false);
 
   // VAD parameters (Energy-based Voice Activity Detection)
   // Dynamic threshold: adjustable between 0.002 (high sensitivity) to 0.025 (high noise cut)
-  private vadThreshold = 0.006;
+  private vadThreshold = 0.0035;
   // Hangover of 5 frames (~1250ms) preserves word endings and intra-sentence pauses
   private readonly HANGOVER_FRAMES = 5;
 
@@ -61,7 +61,6 @@ export class CaptureComponent implements OnInit, OnDestroy {
   private micHighpass?: BiquadFilterNode;
   private micLowpass?: BiquadFilterNode;
 
-  private simInterval?: ReturnType<typeof setInterval>;
   private unsubscribeMode?: () => void;
   private unsubscribeSettings?: () => void;
 
@@ -142,7 +141,6 @@ export class CaptureComponent implements OnInit, OnDestroy {
 
     try {
       await this.setupSystemAudio();
-
       if (this.transcriptionMode() === 'everyone') {
         await this.setupMicAudio();
       }
@@ -152,7 +150,7 @@ export class CaptureComponent implements OnInit, OnDestroy {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.errorMessage.set(`Audio capture error: ${msg}`);
-      this.startSimulationAudioStream();
+      console.error('[CaptureComponent] Audio capture initialization failed:', msg);
     }
   }
 
@@ -300,7 +298,7 @@ export class CaptureComponent implements OnInit, OnDestroy {
     this.micProcessor = this.micAudioContext.createScriptProcessor(4096, 1, 1);
 
     this.micProcessor.onaudioprocess = (e) => {
-      if (!this.isCapturing() || this.transcriptionMode() !== 'everyone') return;
+      if (!this.isCapturing()) return;
       this.processPcmChunk(e.inputBuffer.getChannelData(0), 'mic', this.micVad);
     };
 
@@ -354,6 +352,11 @@ export class CaptureComponent implements OnInit, OnDestroy {
     channel: 'system' | 'mic',
     vadState: ChannelVadState
   ): void {
+    // In other-only mode, completely discard any microphone audio
+    if (this.transcriptionMode() === 'other-only' && channel === 'mic') {
+      return;
+    }
+
     const len = channelData.length;
     const pcm16 = new Int16Array(len);
     let sumSquares = 0;
@@ -384,11 +387,14 @@ export class CaptureComponent implements OnInit, OnDestroy {
     }
 
     // Gate: ONLY forward speech chunks to transcription!
-    // Silence does NOT get sent to Whisper or Deepgram.
+    // Silence does NOT get sent to on-device STT engines.
     if (vadState.isSpeechActive) {
       this.ipcService.sendAudioChunk({
         channel,
         buffer: pcm16.buffer,
+        sampleRate: 16000,
+        rmsVolume: rms,
+        timestamp: Date.now(),
       });
     }
   }
@@ -454,46 +460,5 @@ export class CaptureComponent implements OnInit, OnDestroy {
     this.systemVad = { hangoverCounter: 0, lastRms: 0, isSpeechActive: false };
 
     this.stopMicAudio();
-
-    if (this.simInterval) {
-      clearInterval(this.simInterval);
-      this.simInterval = undefined;
-    }
-  }
-
-  private startSimulationAudioStream(): void {
-    this.isCapturing.set(true);
-    this.sourceName.set('Simulated Audio Stream');
-
-    this.simInterval = setInterval(() => {
-      if (!this.isCapturing()) return;
-      this.simulateAudioBurst();
-    }, 1200);
-  }
-
-  simulateAudioBurst(): void {
-    const samples = 4096;
-    const pcm16 = new Int16Array(samples);
-    const freq = 440;
-    const level = 0.3 + Math.random() * 0.4;
-
-    for (let i = 0; i < samples; i++) {
-      const t = i / 16000;
-      pcm16[i] = Math.sin(2 * Math.PI * freq * t) * level * 0x7fff;
-    }
-
-    this.audioLevel.set(level);
-    this.ipcService.sendAudioLevel(level);
-    this.ipcService.sendAudioChunk({
-      channel: 'system',
-      buffer: pcm16.buffer,
-    });
-
-    setTimeout(() => {
-      if (this.isCapturing()) {
-        this.audioLevel.set(0.05);
-        this.ipcService.sendAudioLevel(0.05);
-      }
-    }, 300);
   }
 }

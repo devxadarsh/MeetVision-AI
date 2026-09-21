@@ -12,9 +12,11 @@ import {
   MeetingSummary,
   TranscriptionMode,
   AudioChunkPayload,
-  WhisperStatus,
-  WhisperDownloadProgress,
   MacosPermissions,
+  STTEngineInfo,
+  ParakeetStatus,
+  ParakeetModelType,
+  ParakeetDownloadProgress,
 } from '@shared/ipc';
 
 @Injectable({
@@ -24,6 +26,26 @@ export class IpcService {
   private get api() {
     return window.electronAPI;
   }
+
+  private mockSettings: AppSettings = {
+    sttProvider: 'parakeet',
+    parakeetModel: 'parakeet-flash',
+    llmProvider: 'local',
+    llmModel: 'claude-3-5-sonnet-20241022',
+    temperature: 0.3,
+    maxTokens: 500,
+    overlayOpacity: 0.88,
+    hasAnthropicKey: false,
+    isEncryptionAvailable: false,
+    profile: {
+      role: 'Staff Software Engineer / Tech Lead',
+      projectSummary:
+        'Leading the core payments and ledger infrastructure v2 migration. High reliability, zero data loss, strict idempotency.',
+      glossary: ['idempotency', 'circuit breaker', 'canary cohort', 'ledger', 'p99 latency'],
+      tone: 'concise',
+    },
+  };
+  private mockSettingsListeners: ((settings: AppSettings) => void)[] = [];
 
   isElectron(): boolean {
     return typeof window !== 'undefined' && !!window.electronAPI;
@@ -44,14 +66,10 @@ export class IpcService {
         electronVersion: 'N/A (Browser)',
         chromeVersion: typeof navigator !== 'undefined' ? navigator.userAgent : 'Browser',
         nodeVersion: 'N/A',
-        uptimeSec: 360,
-        memoryUsageMb: {
-          rss: 85,
-          heapUsed: 42,
-          heapTotal: 64,
-        },
+        uptimeSec: 0,
+        memoryUsageMb: { rss: 0, heapTotal: 0, heapUsed: 0 },
         contentProtectionActive: false,
-        sttConnected: true,
+        sttConnected: false,
         activeWindows: 1,
       };
     }
@@ -149,7 +167,15 @@ export class IpcService {
 
   async getSessionStatus(): Promise<SessionStatus> {
     if (!this.api) {
-      return { active: true, provider: 'Browser Dev Simulation' };
+      const provider =
+        this.mockSettings.sttProvider === 'apple-speech'
+          ? 'Apple Speech'
+          : 'NVIDIA Parakeet';
+      const model =
+        this.mockSettings.sttProvider === 'apple-speech'
+          ? 'macOS Neural Engine'
+          : this.mockSettings.parakeetModel || 'Parakeet Flash';
+      return { active: true, provider, model };
     }
     return this.api.getSessionStatus();
   }
@@ -205,29 +231,56 @@ export class IpcService {
     return this.api.onTranscriptionModeChanged(callback);
   }
 
-  // Local Whisper STT Management
-  async getWhisperStatus(): Promise<WhisperStatus> {
+  // NVIDIA Parakeet STT Engine Management
+  async getParakeetStatus(): Promise<ParakeetStatus> {
     if (!this.api) {
       return {
         available: true,
-        binaryPath: '/opt/homebrew/bin/whisper-cli',
-        gpuAcceleration: 'Apple Silicon Metal (GPU)',
-        installedModels: ['base.en'],
-        currentModel: 'base.en',
-        isDownloading: false,
+        installedModels: ['parakeet-flash'],
+        currentModel: 'parakeet-flash',
       };
     }
-    return this.api.getWhisperStatus();
+    return this.api.getParakeetStatus();
   }
 
-  async downloadWhisperModel(modelName: string): Promise<boolean> {
+  async downloadParakeetModel(modelId: ParakeetModelType): Promise<boolean> {
     if (!this.api) return true;
-    return this.api.downloadWhisperModel(modelName);
+    return this.api.downloadParakeetModel(modelId);
   }
 
-  onWhisperDownloadProgress(callback: (progress: WhisperDownloadProgress) => void): (() => void) {
+  async deleteParakeetModel(modelId: ParakeetModelType): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.deleteParakeetModel(modelId);
+  }
+
+  onParakeetDownloadProgress(callback: (progress: ParakeetDownloadProgress) => void): (() => void) {
     if (!this.api) return () => {};
-    return this.api.onWhisperDownloadProgress(callback);
+    return this.api.onParakeetDownloadProgress(callback);
+  }
+
+  // Pluggable STT Engines
+  async getSttEngines(): Promise<STTEngineInfo[]> {
+    if (!this.api) {
+      return [
+        {
+          id: 'parakeet',
+          name: 'NVIDIA Parakeet (FastConformer)',
+          description: 'High-speed transducer and CTC speech recognition models optimized for low latency.',
+          isExperimental: false,
+          available: true,
+          statusDetail: 'FastConformer Ready',
+        },
+        {
+          id: 'apple-speech',
+          name: 'Apple Speech (Native macOS Dictation)',
+          description: '100% on-device speech recognition powered by macOS Neural Engine (ANE) with zero downloads.',
+          isExperimental: false,
+          available: true,
+          statusDetail: 'macOS Native ANE Ready',
+        },
+      ];
+    }
+    return this.api.getSttEngines();
   }
 
   // macOS Permissions
@@ -259,34 +312,31 @@ export class IpcService {
     return this.api.regenerateAnswer(payload);
   }
 
+  async answerQuestion(payload?: string | { questionId?: string; text?: string; speaker?: string }): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.answerQuestion(payload);
+  }
+
+  async resetSession(): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.resetSession();
+  }
+
   // Settings & Profile channels (Milestone 4)
   async getSettings(): Promise<AppSettings> {
     if (!this.api) {
-      return {
-        sttProvider: 'simulation',
-        llmProvider: 'local',
-        llmModel: 'claude-3-5-sonnet-20241022',
-        temperature: 0.3,
-        maxTokens: 500,
-        overlayOpacity: 0.88,
-        hasAnthropicKey: false,
-        hasDeepgramKey: false,
-        isEncryptionAvailable: false,
-        profile: {
-          role: 'Staff Software Engineer / Tech Lead',
-          projectSummary:
-            'Leading the core payments and ledger infrastructure v2 migration. High reliability, zero data loss, strict idempotency.',
-          glossary: ['idempotency', 'circuit breaker', 'canary cohort', 'ledger', 'p99 latency'],
-          tone: 'concise',
-        },
-      };
+      return { ...this.mockSettings };
     }
     return this.api.getSettings();
   }
 
   async setSettings(settings: AppSettings): Promise<AppSettings> {
     if (!this.api) {
-      return settings;
+      this.mockSettings = { ...this.mockSettings, ...settings };
+      for (const listener of this.mockSettingsListeners) {
+        listener(this.mockSettings);
+      }
+      return { ...this.mockSettings };
     }
     return this.api.setSettings(settings);
   }
@@ -305,7 +355,12 @@ export class IpcService {
   }
 
   onSettingsChanged(callback: (settings: AppSettings) => void): (() => void) | undefined {
-    if (!this.api) return undefined;
+    if (!this.api) {
+      this.mockSettingsListeners.push(callback);
+      return () => {
+        this.mockSettingsListeners = this.mockSettingsListeners.filter((cb) => cb !== callback);
+      };
+    }
     return this.api.onSettingsChanged(callback);
   }
 

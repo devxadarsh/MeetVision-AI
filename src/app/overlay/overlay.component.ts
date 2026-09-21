@@ -97,7 +97,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   // State Signals
   readonly isElectron = signal(this.ipcService.isElectron());
   readonly isListening = signal(true);
-  readonly sessionSeconds = signal(872);
+  readonly sessionSeconds = signal(0);
   readonly clickThroughActive = signal(false);
   readonly selectedMode = signal<'Short' | 'Detailed' | 'Simple'>('Short');
   readonly showHotkeys = signal(true);
@@ -107,7 +107,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly isSettingsOpen = signal(false);
   readonly overlayVersion = signal<'v1' | 'v2'>('v1');
   readonly multiWorkspace = signal<boolean>(true);
-  readonly transcriptionMode = signal<TranscriptionMode>('other-only');
+  readonly transcriptionMode = signal<TranscriptionMode>('everyone');
   readonly hasMicPermission = signal<boolean>(true);
 
   // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
@@ -123,6 +123,12 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly activeInterim = signal<TranscriptSegment | null>(null);
   readonly audioLevel = signal<number>(0);
   readonly sttProvider = signal<string>('Initializing STT...');
+  readonly sttModel = signal<string>('');
+  readonly answeringSegmentIds = signal<Set<string>>(new Set<string>());
+  readonly answeredSegmentIds = signal<Set<string>>(new Set<string>());
+  readonly activeLiveText = signal<string>('');
+  readonly activeLiveSpeaker = signal<string>('');
+  readonly isSpeaking = signal<boolean>(false);
 
   // Custom Tooltip State (Smart non-clipping placement)
   readonly tooltipText = signal<string | null>(null);
@@ -152,21 +158,52 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return list.every((q) => collapsed.has(q.id));
   });
 
-  readonly latestSpeech = computed(() => {
+  readonly displayedTranscriptSegments = computed(() => {
+    const segs = this.transcriptSegments();
+    if (this.transcriptionMode() === 'other-only') {
+      return segs.filter((s) => s.speaker !== 'You');
+    }
+    return segs;
+  });
+
+  readonly displayedInterim = computed(() => {
     const interim = this.activeInterim();
+    if (!interim) return null;
+    if (this.transcriptionMode() === 'other-only' && interim.speaker === 'You') {
+      return null;
+    }
+    return interim;
+  });
+
+  readonly displayedLiveText = computed(() => {
+    if (this.transcriptionMode() === 'other-only' && this.activeLiveSpeaker() === 'You') {
+      return '';
+    }
+    return this.activeLiveText();
+  });
+
+  readonly isLatestRowAnswered = computed(() => {
+    const segs = this.displayedTranscriptSegments();
+    if (segs.length === 0) return true;
+    const last = segs[segs.length - 1];
+    return this.answeredSegmentIds().has(last.id) || this.answeringSegmentIds().has(last.id);
+  });
+
+  readonly latestSpeech = computed(() => {
+    const interim = this.displayedInterim();
     if (interim && interim.text && interim.text.trim().length > 0) {
       return {
         text: interim.text,
-        speaker: interim.speaker || 'You',
+        speaker: interim.speaker || (this.transcriptionMode() === 'other-only' ? 'Other' : 'You'),
         isLive: true,
       };
     }
-    const segs = this.transcriptSegments();
+    const segs = this.displayedTranscriptSegments();
     if (segs.length > 0) {
       const last = segs[segs.length - 1];
       return {
         text: last.text,
-        speaker: last.speaker || 'You',
+        speaker: last.speaker || (this.transcriptionMode() === 'other-only' ? 'Other' : 'You'),
         isLive: false,
       };
     }
@@ -199,6 +236,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeOverlayVersion?: () => void;
   private unsubscribeMultiWorkspace?: () => void;
   private unsubscribeTranscriptionMode?: () => void;
+  private unsubscribeSettingsChanged?: () => void;
+  private unsubscribeTranscriptClear?: () => void;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
@@ -208,7 +247,6 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (savedVer === 'v1' || savedVer === 'v2') {
       this.overlayVersion.set(savedVer);
     }
-    this.seedInitialQuestions();
     this.setupSessionTimer();
     this.setupIpcListeners();
     this.checkConsentStatus().catch((err) => {
@@ -268,6 +306,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (this.unsubscribeOverlayVersion) this.unsubscribeOverlayVersion();
     if (this.unsubscribeMultiWorkspace) this.unsubscribeMultiWorkspace();
     if (this.unsubscribeTranscriptionMode) this.unsubscribeTranscriptionMode();
+    if (this.unsubscribeSettingsChanged) this.unsubscribeSettingsChanged();
+    if (this.unsubscribeTranscriptClear) this.unsubscribeTranscriptClear();
   }
 
   private seedInitialQuestions(): void {
@@ -334,12 +374,28 @@ export class OverlayComponent implements OnInit, OnDestroy {
       this.ipcService.getClickThrough().then((val) => {
         this.clickThroughActive.set(val);
       });
-
-      this.ipcService.getSessionStatus().then((status) => {
-        this.isListening.set(status.active);
-        this.sttProvider.set(status.provider);
-      });
     }
+
+    this.ipcService.getSessionStatus().then((status) => {
+      this.isListening.set(status.active);
+      this.sttProvider.set(status.provider);
+      if (status.model) {
+        this.sttModel.set(status.model);
+      }
+    }).catch(() => {});
+
+    // Reactive App Settings changed (e.g. user selected new engine/model in Settings panel and clicked Save)
+    this.unsubscribeSettingsChanged = this.ipcService.onSettingsChanged(async () => {
+      try {
+        const status = await this.ipcService.getSessionStatus();
+        this.sttProvider.set(status.provider);
+        this.sttModel.set(status.model || '');
+        const modelLabel = status.model ? `${status.model} (${status.provider})` : status.provider;
+        this.showToast(`Active STT Model: ${modelLabel}`);
+      } catch (err) {
+        console.warn('[OverlayComponent] Failed to refresh STT session status after settings changed:', err);
+      }
+    });
 
     // Global Hotkeys
     this.unsubscribeHotkey = this.ipcService.onHotkey((action: HotkeyAction) => {
@@ -372,22 +428,87 @@ export class OverlayComponent implements OnInit, OnDestroy {
       this.audioLevel.set(level);
     });
 
-    // Streaming Transcript Segments (Milestone 2)
+    // Streaming Transcript Segments (Milestone 2) with deduplication & row accumulation until Give Answer
     this.unsubscribeTranscript = this.ipcService.onTranscriptUpdate(
       (segment: TranscriptSegment) => {
         if (segment.isFinal) {
           this.activeInterim.set(null);
-          // Ring buffer: limit transcript segments to 500 max for long 60+ min meetings
+          this.activeLiveText.set('');
+          this.isSpeaking.set(false);
+          const text = segment.text ? segment.text.trim() : '';
+          if (!text) return;
+
           this.transcriptSegments.update((prev) => {
-            const next = [...prev, segment];
+            // Deduplicate exact repeat by segment ID
+            if (prev.some((s) => s.id === segment.id)) {
+              return prev;
+            }
+
+            const last = prev[prev.length - 1];
+            // Check if latest row has already been answered (or answering)
+            const isLastAnswered =
+              last &&
+              (this.answeredSegmentIds().has(last.id) || this.answeringSegmentIds().has(last.id));
+
+            // If there is an active unanswered latest row: append text to that same row!
+            if (last && !isLastAnswered) {
+              if (last.text.toLowerCase().endsWith(text.toLowerCase()) || last.text.includes(text)) {
+                return prev;
+              }
+
+              let base = last.text.trim();
+              let addition = text.trim();
+
+              // If addition continues the current thought or starts with a lowercase/conjunction,
+              // strip any artificial period from the previous chunk so speech does not break into fragments
+              const isContinuation =
+                /^[a-z]/.test(addition) ||
+                /^(and|but|so|because|which|that|to|for|or|also|then|with|as|if|when)\b/i.test(addition);
+
+              if (isContinuation && base.endsWith('.')) {
+                base = base.slice(0, -1).trim();
+              }
+
+              const combinedText = `${base} ${addition}`.trim();
+              const updatedLast: TranscriptSegment = {
+                ...last,
+                text: combinedText,
+                endMs: segment.endMs || Date.now(),
+              };
+              return [...prev.slice(0, -1), updatedLast];
+            }
+
+            // Otherwise, start a brand new row (first row or previous row was answered)
+            const next = [...prev, { ...segment, text }];
             return next.length > 500 ? next.slice(-500) : next;
           });
         } else {
-          this.activeInterim.set(segment);
+          const raw = segment.text ? segment.text.trim() : '';
+          if (raw && raw !== '...') {
+            this.activeInterim.set(segment);
+            this.activeLiveText.set(raw);
+            this.activeLiveSpeaker.set(segment.speaker || '');
+            this.isSpeaking.set(true);
+          }
         }
         this.scrollToBottom();
       }
     );
+
+    // Active Meeting Session Reset
+    this.unsubscribeTranscriptClear = this.ipcService.onTranscriptClear(() => {
+      this.transcriptSegments.set([]);
+      this.activeInterim.set(null);
+      this.activeLiveText.set('');
+      this.activeLiveSpeaker.set('');
+      this.isSpeaking.set(false);
+      this.questions.set([]);
+      this.answeringSegmentIds.set(new Set());
+      this.answeredSegmentIds.set(new Set());
+      this.sessionSeconds.set(0);
+      this.rawBufferMap.clear();
+      this.showToast('Session reset. Ready for meeting speech.');
+    });
 
     // Detected Spoken Questions (Milestone 3)
     this.unsubscribeQuestionNew = this.ipcService.onQuestionNew((newQuestion: Question) => {
@@ -454,9 +575,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
       return copy;
     });
 
-    // Switch to questions tab and notify
-    this.currentTab.set('questions');
-    this.showToast('Spoken question detected!');
+    // Keep current tab stable so transcript rows remain visible and uninterrupted
+    this.showToast('Question detected and logged in radar.');
   }
 
   private handleAnswerChunk(chunk: AnswerChunk): void {
@@ -470,10 +590,20 @@ export class OverlayComponent implements OnInit, OnDestroy {
       .map((l) => l.replace(/^[•\-\*]\s*/, '').trim())
       .filter((b) => b.length > 0);
 
+    const isComplete = Boolean(chunk.isComplete);
+    if (isComplete) {
+      const segId = chunk.questionId.replace(/^q-/, '');
+      this.answeringSegmentIds.update((set) => {
+        const copy = new Set(set);
+        copy.delete(segId);
+        return copy;
+      });
+      this.answeredSegmentIds.update((set) => new Set(set).add(segId));
+    }
+
     this.questions.update((list) =>
       list.map((q) => {
         if (q.id === chunk.questionId) {
-          const isComplete = Boolean(chunk.isComplete);
           return {
             ...q,
             status: isComplete
@@ -547,6 +677,71 @@ export class OverlayComponent implements OnInit, OnDestroy {
         );
       }, 600);
     }
+  }
+
+  async triggerAnswer(questionId?: string): Promise<void> {
+    if (questionId) {
+      this.questions.update((list) =>
+        list.map((item) => (item.id === questionId ? { ...item, status: 'answering' } : item))
+      );
+    }
+    this.showToast('Generating answer talking points...');
+    if (this.isElectron()) {
+      await this.ipcService.answerQuestion(questionId);
+    }
+  }
+
+  async giveAnswerForSegment(segment: TranscriptSegment): Promise<void> {
+    if (!segment.text || !segment.text.trim()) return;
+
+    if (this.answeredSegmentIds().has(segment.id)) {
+      this.currentTab.set('questions');
+      const target = this.questions().find(
+        (q) => q.id === `q-${segment.id}` || q.text.trim().toLowerCase() === segment.text.trim().toLowerCase()
+      );
+      if (target) {
+        this.collapsedIds.update((set) => {
+          const copy = new Set(set);
+          copy.delete(target.id);
+          return copy;
+        });
+      }
+      return;
+    }
+
+    this.answeringSegmentIds.update((set) => new Set(set).add(segment.id));
+    this.showToast('Synthesizing answer talking points...');
+
+    if (this.isElectron()) {
+      await this.ipcService.answerQuestion({
+        questionId: `q-${segment.id}`,
+        text: segment.text,
+        speaker: segment.speaker,
+      });
+    }
+  }
+
+  isRowAnswered(seg: TranscriptSegment): boolean {
+    return this.answeredSegmentIds().has(seg.id) || this.answeringSegmentIds().has(seg.id);
+  }
+
+  async startNewSession(): Promise<void> {
+    this.questions.set([]);
+    this.collapsedIds.set(new Set());
+    this.transcriptSegments.set([]);
+    this.activeInterim.set(null);
+    this.activeLiveText.set('');
+    this.activeLiveSpeaker.set('');
+    this.isSpeaking.set(false);
+    this.answeringSegmentIds.set(new Set());
+    this.answeredSegmentIds.set(new Set());
+    this.meetingSummary.set(null);
+    this.sessionSeconds.set(0);
+    this.rawBufferMap.clear();
+    if (this.isElectron()) {
+      await this.ipcService.resetSession();
+    }
+    this.showToast('New meeting session started.');
   }
 
   private scrollToBottom(): void {
@@ -674,6 +869,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
       SAMPLE_QUESTION_TEMPLATES[this.templateIndex % SAMPLE_QUESTION_TEMPLATES.length];
     this.templateIndex++;
 
+    const isUnanswered = this.templateIndex % 2 === 1;
     const newId = `q-${Date.now()}`;
     const newQuestion: Question = {
       id: newId,
@@ -681,14 +877,16 @@ export class OverlayComponent implements OnInit, OnDestroy {
       text: template.text,
       speaker: template.speaker || 'Speaker 1',
       askedAt: Date.now(),
-      status: 'new',
-      answer: {
-        questionId: newId,
-        mode: template.mode,
-        bullets: template.bullets,
-        code: template.code,
-        createdAt: Date.now(),
-      },
+      status: isUnanswered ? 'unanswered' : 'new',
+      answer: isUnanswered
+        ? undefined
+        : {
+            questionId: newId,
+            mode: template.mode,
+            bullets: template.bullets,
+            code: template.code,
+            createdAt: Date.now(),
+          },
     };
 
     this.questions.update((prev) => [newQuestion, ...prev]);

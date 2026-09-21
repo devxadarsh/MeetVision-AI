@@ -1,12 +1,12 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AppSettings, ContextProfile, TranscriptionMode } from '@shared/ipc';
+import { AppSettings, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
 
 interface StoredConfigFile {
-  sttProvider: 'deepgram' | 'simulation' | 'local-whisper';
+  sttProvider: STTEngineType;
   transcriptionMode?: TranscriptionMode;
-  whisperModel?: string;
+  parakeetModel?: ParakeetModelType;
   meetingAudioDeviceId?: string;
   micAudioDeviceId?: string;
   llmProvider: 'anthropic' | 'local';
@@ -15,7 +15,6 @@ interface StoredConfigFile {
   maxTokens: number;
   profile: ContextProfile;
   encryptedAnthropicApiKey?: string; // base64 encoded ciphertext
-  encryptedDeepgramApiKey?: string;  // base64 encoded ciphertext
   hasAcceptedConsent?: boolean;
   consentAcceptedAt?: number;
   sttLanguage?: 'en' | 'hi' | 'multi';
@@ -34,7 +33,6 @@ interface StoredConfigFile {
   noiseSuppression?: boolean;
   echoCancellation?: boolean;
   autoGainControl?: boolean;
-  whisperPromptPriming?: boolean;
 }
 
 const DEFAULT_PROFILE: ContextProfile = {
@@ -46,9 +44,9 @@ const DEFAULT_PROFILE: ContextProfile = {
 };
 
 const DEFAULT_SETTINGS: StoredConfigFile = {
-  sttProvider: 'local-whisper',
+  sttProvider: 'parakeet',
   transcriptionMode: 'everyone',
-  whisperModel: 'tiny.en',
+  parakeetModel: 'parakeet-flash',
   llmProvider: 'local',
   llmModel: 'claude-3-5-sonnet-20241022',
   temperature: 0.3,
@@ -64,7 +62,6 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   noiseSuppression: true,
   echoCancellation: true,
   autoGainControl: true,
-  whisperPromptPriming: true,
   profile: DEFAULT_PROFILE,
 };
 
@@ -143,11 +140,6 @@ export class StoreService {
     return decrypted || process.env.ANTHROPIC_API_KEY || undefined;
   }
 
-  getDecryptedDeepgramKey(): string | undefined {
-    const decrypted = this.decryptSecret(this.data.encryptedDeepgramApiKey);
-    return decrypted || process.env.DEEPGRAM_API_KEY || undefined;
-  }
-
   getContextProfile(): ContextProfile {
     return { ...this.data.profile };
   }
@@ -155,12 +147,11 @@ export class StoreService {
   getSettings(): AppSettings {
     const isEncAvailable = safeStorage.isEncryptionAvailable();
     const hasAnthropic = Boolean(this.getDecryptedAnthropicKey());
-    const hasDeepgram = Boolean(this.getDecryptedDeepgramKey());
 
     return {
-      sttProvider: this.data.sttProvider || 'local-whisper',
-      transcriptionMode: this.data.transcriptionMode || 'other-only',
-      whisperModel: this.data.whisperModel || 'base.en',
+      sttProvider: this.data.sttProvider === 'apple-speech' ? 'apple-speech' : 'parakeet',
+      transcriptionMode: this.data.transcriptionMode || 'everyone',
+      parakeetModel: this.data.parakeetModel || 'parakeet-flash',
       meetingAudioDeviceId: this.data.meetingAudioDeviceId,
       micAudioDeviceId: this.data.micAudioDeviceId,
       llmProvider: this.data.llmProvider,
@@ -169,7 +160,6 @@ export class StoreService {
       maxTokens: this.data.maxTokens,
       profile: { ...this.data.profile },
       hasAnthropicKey: hasAnthropic,
-      hasDeepgramKey: hasDeepgram,
       isEncryptionAvailable: isEncAvailable,
       hasAcceptedConsent: Boolean(this.data.hasAcceptedConsent),
       consentAcceptedAt: this.data.consentAcceptedAt,
@@ -189,12 +179,11 @@ export class StoreService {
       noiseSuppression: this.data.noiseSuppression !== false,
       echoCancellation: this.data.echoCancellation !== false,
       autoGainControl: this.data.autoGainControl !== false,
-      whisperPromptPriming: this.data.whisperPromptPriming !== false,
     };
   }
 
   getTranscriptionMode(): TranscriptionMode {
-    return this.data.transcriptionMode || 'other-only';
+    return this.data.transcriptionMode || 'everyone';
   }
 
   setTranscriptionMode(mode: TranscriptionMode): TranscriptionMode {
@@ -245,17 +234,9 @@ export class StoreService {
       }
     }
 
-    if (newSettings.deepgramApiKey !== undefined) {
-      if (newSettings.deepgramApiKey.trim() === '') {
-        delete this.data.encryptedDeepgramApiKey;
-      } else {
-        this.data.encryptedDeepgramApiKey = this.encryptSecret(newSettings.deepgramApiKey);
-      }
-    }
-
     if (newSettings.sttProvider) this.data.sttProvider = newSettings.sttProvider;
     if (newSettings.transcriptionMode) this.data.transcriptionMode = newSettings.transcriptionMode;
-    if (newSettings.whisperModel) this.data.whisperModel = newSettings.whisperModel;
+    if (newSettings.parakeetModel) this.data.parakeetModel = newSettings.parakeetModel;
     if (newSettings.meetingAudioDeviceId !== undefined) this.data.meetingAudioDeviceId = newSettings.meetingAudioDeviceId;
     if (newSettings.micAudioDeviceId !== undefined) this.data.micAudioDeviceId = newSettings.micAudioDeviceId;
     if (newSettings.llmProvider) this.data.llmProvider = newSettings.llmProvider;
@@ -278,7 +259,6 @@ export class StoreService {
     if (typeof newSettings.noiseSuppression === 'boolean') this.data.noiseSuppression = newSettings.noiseSuppression;
     if (typeof newSettings.echoCancellation === 'boolean') this.data.echoCancellation = newSettings.echoCancellation;
     if (typeof newSettings.autoGainControl === 'boolean') this.data.autoGainControl = newSettings.autoGainControl;
-    if (typeof newSettings.whisperPromptPriming === 'boolean') this.data.whisperPromptPriming = newSettings.whisperPromptPriming;
 
     if (newSettings.profile) {
       this.data.profile = {

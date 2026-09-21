@@ -1,4 +1,4 @@
-export type QuestionStatus = 'new' | 'answering' | 'answered' | 'pinned' | 'dismissed';
+export type QuestionStatus = 'new' | 'unanswered' | 'answering' | 'answered' | 'pinned' | 'dismissed';
 
 export interface Question {
   id: string;
@@ -68,6 +68,7 @@ export interface TranscriptSegment {
 export interface SessionStatus {
   active: boolean;
   provider: string;
+  model?: string;
 }
 
 export interface ContextProfile {
@@ -81,24 +82,25 @@ export type TranscriptionMode = 'other-only' | 'everyone';
 
 export type AudioChunkPayload =
   | ArrayBuffer
-  | {
-      channel: 'system' | 'mic';
-      buffer: ArrayBuffer;
-    };
+  | AudioFrame;
 
-export interface WhisperStatus {
-  available: boolean;
-  binaryPath?: string;
-  gpuAcceleration?: string;
-  installedModels: string[];
-  currentModel: string;
-  isDownloading?: boolean;
-  downloadProgress?: number;
-  error?: string;
+export interface MacosPermissions {
+  microphone: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown';
+  screen: 'granted' | 'denied' | 'not-determined' | 'unknown';
 }
 
-export interface WhisperDownloadProgress {
-  model: string;
+export type STTEngineType = 'parakeet' | 'apple-speech';
+
+export type ParakeetModelType =
+  | 'parakeet-flash'
+  | 'parakeet-tdt-v2'
+  | 'parakeet-tdt-v3'
+  | 'parakeet-ctc-1.1b'
+  | 'nemotron-speech-3.5'
+  | 'nemotron-3.5-multilingual';
+
+export interface ParakeetDownloadProgress {
+  model: ParakeetModelType;
   percent: number;
   downloadedMb: number;
   totalMb: number;
@@ -106,15 +108,37 @@ export interface WhisperDownloadProgress {
   error?: string;
 }
 
-export interface MacosPermissions {
-  microphone: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown';
-  screen: 'granted' | 'denied' | 'not-determined' | 'unknown';
+export interface ParakeetStatus {
+  available: boolean;
+  binaryPath?: string;
+  installedModels: ParakeetModelType[];
+  currentModel: ParakeetModelType;
+  isDownloading?: boolean;
+  downloadProgress?: number;
+  downloadingModel?: ParakeetModelType;
+}
+
+export interface AudioFrame {
+  channel: 'system' | 'mic';
+  buffer: ArrayBuffer;
+  sampleRate?: number;
+  rmsVolume?: number;
+  timestamp?: number;
+}
+
+export interface STTEngineInfo {
+  id: STTEngineType;
+  name: string;
+  description: string;
+  isExperimental: boolean;
+  available: boolean;
+  statusDetail?: string;
 }
 
 export interface AppSettings {
-  sttProvider: 'deepgram' | 'simulation' | 'local-whisper';
+  sttProvider: STTEngineType;
   transcriptionMode?: TranscriptionMode;
-  whisperModel?: string;
+  parakeetModel?: ParakeetModelType;
   meetingAudioDeviceId?: string;
   micAudioDeviceId?: string;
   llmProvider: 'anthropic' | 'local';
@@ -124,10 +148,8 @@ export interface AppSettings {
   profile: ContextProfile;
   // Key flags returned to UI (keys themselves are encrypted via safeStorage in main process)
   hasAnthropicKey?: boolean;
-  hasDeepgramKey?: boolean;
   // Form input field when user updates their key
   anthropicApiKey?: string;
-  deepgramApiKey?: string;
   isEncryptionAvailable?: boolean;
   // First-run privacy & legal consent (PRD Section 11 / Milestone 6)
   hasAcceptedConsent?: boolean;
@@ -151,7 +173,6 @@ export interface AppSettings {
   noiseSuppression?: boolean;
   echoCancellation?: boolean;
   autoGainControl?: boolean;
-  whisperPromptPriming?: boolean;
 }
 
 export interface AppDiagnostics {
@@ -203,8 +224,10 @@ export const IPC_CHANNELS = {
   TRANSCRIPT_UPDATE: 'transcript:update',
   TRANSCRIPT_CLEAR: 'transcript:clear',
   QUESTION_NEW: 'question:new',
+  QUESTION_ANSWER: 'question:answer',
   ANSWER_CHUNK: 'answer:chunk',
   ANSWER_REGENERATE: 'answer:regenerate',
+  SESSION_RESET: 'session:reset',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_OPEN: 'settings:open',
@@ -223,11 +246,13 @@ export const IPC_CHANNELS = {
   TRANSCRIPTION_MODE_GET: 'transcription-mode:get',
   TRANSCRIPTION_MODE_SET: 'transcription-mode:set',
   TRANSCRIPTION_MODE_CHANGED: 'transcription-mode:changed',
-  WHISPER_STATUS_GET: 'whisper:status-get',
-  WHISPER_MODEL_DOWNLOAD: 'whisper:model-download',
-  WHISPER_DOWNLOAD_PROGRESS: 'whisper:download-progress',
+  PARAKEET_STATUS_GET: 'parakeet:status-get',
+  PARAKEET_MODEL_DOWNLOAD: 'parakeet:model-download',
+  PARAKEET_MODEL_DELETE: 'parakeet:model-delete',
+  PARAKEET_DOWNLOAD_PROGRESS: 'parakeet:download-progress',
   MACOS_PERMISSIONS_GET: 'macos:permissions-get',
   MACOS_PERMISSION_REQUEST: 'macos:permission-request',
+  STT_ENGINES_GET: 'stt:engines-get',
 } as const;
 
 export interface ElectronAPI {
@@ -260,10 +285,13 @@ export interface ElectronAPI {
   getTranscriptionMode: () => Promise<TranscriptionMode>;
   setTranscriptionMode: (mode: TranscriptionMode) => Promise<TranscriptionMode>;
   onTranscriptionModeChanged: (callback: (mode: TranscriptionMode) => void) => () => void;
-  // Local Whisper STT Engine Management
-  getWhisperStatus: () => Promise<WhisperStatus>;
-  downloadWhisperModel: (modelName: string) => Promise<boolean>;
-  onWhisperDownloadProgress: (callback: (progress: WhisperDownloadProgress) => void) => () => void;
+  // NVIDIA Parakeet STT Engine Management
+  getParakeetStatus: () => Promise<ParakeetStatus>;
+  downloadParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  deleteParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void) => () => void;
+  // Pluggable STT Engines
+  getSttEngines: () => Promise<STTEngineInfo[]>;
   // macOS Permissions
   getMacosPermissions: () => Promise<MacosPermissions>;
   requestMacosMicrophonePermission: () => Promise<boolean>;
@@ -271,6 +299,8 @@ export interface ElectronAPI {
   onQuestionNew: (callback: (question: Question) => void) => () => void;
   onAnswerChunk: (callback: (chunk: AnswerChunk) => void) => () => void;
   regenerateAnswer: (payload: RegeneratePayload) => Promise<void>;
+  answerQuestion: (payload?: string | { questionId?: string; text?: string; speaker?: string }) => Promise<boolean>;
+  resetSession: () => Promise<boolean>;
   // Settings & Profile channels (Milestone 4)
   getSettings: () => Promise<AppSettings>;
   setSettings: (settings: AppSettings) => Promise<AppSettings>;

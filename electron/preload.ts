@@ -11,9 +11,10 @@ import {
   AppSettings,
   TranscriptionMode,
   AudioChunkPayload,
-  WhisperStatus,
-  WhisperDownloadProgress,
   MacosPermissions,
+  ParakeetStatus,
+  ParakeetModelType,
+  ParakeetDownloadProgress,
 } from '@shared/ipc';
 
 const api: ElectronAPI = {
@@ -147,21 +148,28 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.TRANSCRIPTION_MODE_CHANGED, handler);
     };
   },
-  // Local Whisper STT Engine Management
-  getWhisperStatus: (): Promise<WhisperStatus> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.WHISPER_STATUS_GET);
+  // NVIDIA Parakeet STT Engine Management
+  getParakeetStatus: (): Promise<ParakeetStatus> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_STATUS_GET);
   },
-  downloadWhisperModel: (modelName: string): Promise<boolean> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.WHISPER_MODEL_DOWNLOAD, modelName);
+  downloadParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_DOWNLOAD, modelId);
   },
-  onWhisperDownloadProgress: (callback: (progress: WhisperDownloadProgress) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, progress: WhisperDownloadProgress) => {
+  deleteParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_DELETE, modelId);
+  },
+  onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, progress: ParakeetDownloadProgress) => {
       callback(progress);
     };
-    ipcRenderer.on(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, handler);
+    ipcRenderer.on(IPC_CHANNELS.PARAKEET_DOWNLOAD_PROGRESS, handler);
     return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.WHISPER_DOWNLOAD_PROGRESS, handler);
+      ipcRenderer.removeListener(IPC_CHANNELS.PARAKEET_DOWNLOAD_PROGRESS, handler);
     };
+  },
+  // Pluggable STT Engines
+  getSttEngines: (): Promise<STTEngineInfo[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.STT_ENGINES_GET);
   },
   // macOS Permissions
   getMacosPermissions: (): Promise<MacosPermissions> => {
@@ -191,6 +199,12 @@ const api: ElectronAPI = {
   },
   regenerateAnswer: (payload: RegeneratePayload): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.ANSWER_REGENERATE, payload);
+  },
+  answerQuestion: (payload?: string | { questionId?: string; text?: string; speaker?: string }): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.QUESTION_ANSWER, payload);
+  },
+  resetSession: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SESSION_RESET);
   },
   // Settings & Profile channels (Milestone 4)
   getSettings: (): Promise<AppSettings> => {
