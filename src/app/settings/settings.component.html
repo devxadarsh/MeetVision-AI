@@ -3,7 +3,7 @@
   <header class="settings-header">
     <div class="header-content">
       <div class="header-badge">Preferences</div>
-      <h1 class="header-title">QuestionLens Configuration</h1>
+      <h1 class="header-title">MeetVision AI Configuration</h1>
       <p class="header-desc">
         Manage your context profile, AI models, and secure credentials.
       </p>
@@ -400,7 +400,7 @@
             </div>
 
             <!-- Parakeet / NeMo Model Cards Grid -->
-            <label class="form-label" style="margin-top: 14px;">QuestionLens — Transcription Models for NVIDIA Parakeet</label>
+            <label class="form-label" style="margin-top: 14px;">MeetVision AI — Transcription Models for NVIDIA Parakeet</label>
             <div class="model-cards-grid">
               @for (m of parakeetModelsList; track m.id) {
                 <div class="model-box" [class.selected]="parakeetModel() === m.id">
@@ -776,10 +776,10 @@
                 <strong>Option 1 (Virtual Audio Loopback):</strong> Install the free open-source
                 <code>BlackHole 2ch</code> (or create a Multi-Output Device in macOS <em>Audio MIDI Setup</em>).
                 In your meeting app (Google Meet, Zoom, Teams), set the speaker output to BlackHole.
-                QuestionLens will capture it as <strong>Meeting Audio</strong>!
+                MeetVision AI will capture it as <strong>Meeting Audio</strong>!
               </li>
               <li>
-                <strong>Option 2 (Default Input):</strong> If your meeting audio plays through your speakers/headset, QuestionLens captures audio via your selected input device.
+                <strong>Option 2 (Default Input):</strong> If your meeting audio plays through your speakers/headset, MeetVision AI captures audio via your selected input device.
               </li>
             </ol>
           </div>
@@ -980,7 +980,7 @@
                 <div class="mini-overlay-header">
                   <div class="mini-header-left">
                     <span class="mini-status-dot" [class.v2-dot]="overlayVersion() === 'v2'"></span>
-                    <span class="mini-title">QuestionLens</span>
+                    <span class="mini-title">MeetVision AI</span>
                     @if (overlayVersion() === 'v2') {
                       <span class="mini-hud-tag">HUD</span>
                     }

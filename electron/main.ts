@@ -135,7 +135,7 @@ function createOverlayWindow(): void {
       }, 1000);
     });
   } else {
-    const distPath = path.join(__dirname, '../dist/QuestionLens/browser/index.html');
+    const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     mainWindow.loadURL(url.pathToFileURL(distPath).href + '#/overlay');
   }
 
@@ -168,7 +168,7 @@ function createCaptureWindow(): void {
       }, 1000);
     });
   } else {
-    const distPath = path.join(__dirname, '../dist/QuestionLens/browser/index.html');
+    const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     captureWindow.loadURL(url.pathToFileURL(distPath).href + '#/capture');
   }
 
@@ -221,7 +221,7 @@ function createSettingsWindow(): void {
     height: 740,
     minWidth: 500,
     minHeight: 500,
-    title: 'QuestionLens Settings',
+    title: 'MeetVision AI Settings',
     show: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -238,7 +238,7 @@ function createSettingsWindow(): void {
       console.warn('Settings window loadURL failed:', err);
     });
   } else {
-    const distPath = path.join(__dirname, '../dist/QuestionLens/browser/index.html');
+    const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     settingsWindow.loadURL(url.pathToFileURL(distPath).href + '#/settings');
   }
 

@@ -81,7 +81,7 @@ export class LlmService implements ILlmService {
       : '';
     const tonePrompt = profile?.tone ? `Tone: ${profile.tone.toUpperCase()}.\n` : '';
 
-    const systemPrompt = `You are QuestionLens, an expert meeting assistant providing concise talking points to the user in real time.
+    const systemPrompt = `You are MeetVision AI, an expert meeting assistant providing concise talking points to the user in real time.
 ${rolePrompt}${projectPrompt}${glossaryPrompt}${tonePrompt}
 Mode: ${mode.toUpperCase()}.
 Formatting rules:

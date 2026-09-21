@@ -7,7 +7,7 @@
   },
   "newProjectRoot": "projects",
   "projects": {
-    "QuestionLens": {
+    "MeetVisionAI": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -21,6 +21,7 @@
         "build": {
           "builder": "@angular/build:application",
           "options": {
+            "outputPath": "dist/MeetVisionAI",
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
@@ -62,10 +63,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "QuestionLens:build:production"
+              "buildTarget": "MeetVisionAI:build:production"
             },
             "development": {
-              "buildTarget": "QuestionLens:build:development"
+              "buildTarget": "MeetVisionAI:build:development"
             }
           },
           "defaultConfiguration": "development"

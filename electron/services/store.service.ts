@@ -71,7 +71,7 @@ export class StoreService {
 
   constructor() {
     const userDataPath = app.getPath('userData');
-    this.filePath = path.join(userDataPath, 'questionlens-settings.json');
+    this.filePath = path.join(userDataPath, 'meetvision-ai-settings.json');
     this.data = this.loadFromDisk();
   }
 

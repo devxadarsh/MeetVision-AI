@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.questionlens.desktop",
-  "productName": "QuestionLens",
+  "appId": "com.meetvision.ai",
+  "productName": "MeetVision AI",
   "directories": {
     "output": "release"
   },
   "files": [
-    "dist/QuestionLens/browser/**/*",
+    "dist/MeetVisionAI/browser/**/*",
     "dist-electron/**/*",
     "package.json"
   ],
@@ -27,7 +27,7 @@
     "entitlements": "electron/entitlements.mac.plist",
     "entitlementsInherit": "electron/entitlements.mac.inherit.plist",
     "extendInfo": {
-      "NSMicrophoneUsageDescription": "QuestionLens requires microphone and meeting audio access to transcribe discussions and generate real-time talking points."
+      "NSMicrophoneUsageDescription": "MeetVision AI requires microphone and meeting audio access to transcribe discussions and generate real-time talking points."
     }
   },
   "dmg": {
@@ -54,7 +54,7 @@
   },
   "publish": {
     "provider": "github",
-    "owner": "questionlens",
-    "repo": "questionlens-desktop"
+    "owner": "meetvision-ai",
+    "repo": "meetvision-ai"
   }
 }
