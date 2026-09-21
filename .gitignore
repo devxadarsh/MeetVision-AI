@@ -1,21 +1,48 @@
-# See https://docs.github.com/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
-
-# Compiled output
+# Compiled and build outputs
 /dist
 /dist-electron
 /release
 /models
-.env
-/tmp
 /out-tsc
 /bazel-out
+/.angular/cache
+.sass-cache/
 
-# Node
+# Local Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
 /node_modules
-npm-debug.log
-yarn-error.log
+/typings
 
-# IDEs and editors
+# Logs & debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+/libpeerconnection.log
+testem.log
+
+# Temporary / OS / System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+/tmp
+/connect.lock
+
+# Test & coverage
+/coverage
+__screenshots__/
+
+# Editor & Tooling directories
 .idea/
 .project
 .classpath
@@ -23,29 +50,19 @@ yarn-error.log
 *.launch
 .settings/
 *.sublime-workspace
+.history/*
+.kilo/
 
-# Visual Studio Code
+# VS Code - keep team configs if any, ignore user state
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 !.vscode/mcp.json
-.history/*
 
-# Miscellaneous
-/.angular/cache
-.sass-cache/
-/connect.lock
-/coverage
-/libpeerconnection.log
-testem.log
-/typings
-__screenshots__/
-
-# System files
-.DS_Store
-Thumbs.db
+# Agent context files (kept local)
 AGENTS.md
 CLAUDE.md
 docs/PRD.md
+
