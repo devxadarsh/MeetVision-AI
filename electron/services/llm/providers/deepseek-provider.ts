@@ -21,7 +21,7 @@ export class DeepseekProvider implements ILlmProvider {
   ): Promise<LlmStreamResult | void> {
     const thinking = Boolean(request.thinkingEnabled);
 
-    await streamOpenAiCompatibleChat(
+    const result = await streamOpenAiCompatibleChat(
       {
         endpoint: DEEPSEEK_ENDPOINT,
         apiKey: request.apiKey,
@@ -38,5 +38,7 @@ export class DeepseekProvider implements ILlmProvider {
       },
       onDelta
     );
+
+    return { finishReason: result.finishReason };
   }
 }

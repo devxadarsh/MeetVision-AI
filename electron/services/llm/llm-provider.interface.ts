@@ -20,6 +20,8 @@ export interface LlmProviderRequest {
 export interface LlmStreamResult {
   /** Optional code snippet produced alongside the streamed bullets. */
   code?: string;
+  /** Provider stop reason, e.g. 'stop' or 'length' (hit the output cap). */
+  finishReason?: string;
 }
 
 export interface ILlmProvider {

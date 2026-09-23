@@ -9,6 +9,8 @@ import {
   Question,
   RegeneratePayload,
   AppSettings,
+  AnswerMode,
+  AnswerQuestionPayload,
   AppDiagnostics,
   TranscriptionMode,
   AudioChunkPayload,
@@ -336,21 +338,23 @@ function registerHotkeys(): void {
   });
 }
 
-function generateAnswerForQuestion(question: Question, mode: 'short' | 'detailed' | 'simple' = 'short'): void {
+function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void {
+  const settings = storeService.getSettings();
+  const answerMode: AnswerMode = mode || settings.answerMode || 'short';
+
   question.status = 'answering';
   questionsMap.set(question.id, question);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, question);
   }
 
-  const settings = storeService.getSettings();
   const relevantSnippets = knowledgeService.retrieveRelevantSnippets(question.text);
 
   llmService.generateAnswerStream(
     question,
     recentTranscript,
     {
-      mode,
+      mode: answerMode,
       profile: storeService.getContextProfile(),
       providerId: settings.llmProvider,
       apiKey: storeService.getDecryptedApiKey(settings.llmProvider),
@@ -358,10 +362,11 @@ function generateAnswerForQuestion(question: Question, mode: 'short' | 'detailed
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
       thinkingEnabled: Boolean(settings.llmThinkingEnabled),
+      codeLanguage: settings.codeLanguage,
       knowledgeSnippets: relevantSnippets,
     },
     (chunk) => {
-      if (chunk.isFinal && question.answer) {
+      if (chunk.isComplete && question.answer) {
         question.status = 'answered';
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -598,11 +603,12 @@ function registerIpcHandlers(): void {
   // Answer Question (Voice / UI Manual Trigger)
   ipcMain.handle(
     IPC_CHANNELS.QUESTION_ANSWER,
-    async (_event, payload?: string | { questionId?: string; text?: string; speaker?: string }) => {
+    async (_event, payload?: string | AnswerQuestionPayload) => {
       let targetQuestion: Question | undefined;
       const questionId = typeof payload === 'string' ? payload : payload?.questionId;
       const segmentText = typeof payload === 'object' ? payload?.text?.trim() : undefined;
       const segmentSpeaker = typeof payload === 'object' ? payload?.speaker : undefined;
+      const requestedMode = typeof payload === 'object' ? payload?.mode : undefined;
 
       if (questionId) {
         targetQuestion = questionsMap.get(questionId);
@@ -641,7 +647,7 @@ function registerIpcHandlers(): void {
       }
 
       if (targetQuestion) {
-        generateAnswerForQuestion(targetQuestion);
+        generateAnswerForQuestion(targetQuestion, requestedMode);
         return true;
       }
       return false;
@@ -665,7 +671,7 @@ function registerIpcHandlers(): void {
     return storeService.getSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: Partial<AppSettings>) => {
     const updated = storeService.updateSettings(newSettings);
     await sttService.applySettings(updated);
 

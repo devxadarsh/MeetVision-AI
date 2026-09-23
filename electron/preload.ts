@@ -224,7 +224,7 @@ const api: ElectronAPI = {
   getSettings: (): Promise<AppSettings> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET);
   },
-  setSettings: (settings: AppSettings): Promise<AppSettings> => {
+  setSettings: (settings: Partial<AppSettings>): Promise<AppSettings> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, settings);
   },
   openSettings: (): Promise<boolean> => {

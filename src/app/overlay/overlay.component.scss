@@ -968,6 +968,14 @@
   }
 }
 
+.answer-truncated,
+.v2-answer-truncated {
+  margin-top: 6px;
+  font-size: 10px;
+  font-style: italic;
+  color: #fbbf24;
+}
+
 .seg-time {
   font-family: ui-monospace, monospace;
   font-size: 10px;

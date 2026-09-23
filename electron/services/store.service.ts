@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AppSettings, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
+import { AppSettings, AnswerMode, CodeLanguage, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
 import {
   LlmProviderId,
   LLM_PROVIDERS,
@@ -18,6 +18,8 @@ interface StoredConfigFile {
   llmProvider: LlmProviderId;
   llmModel: string;
   llmThinkingEnabled?: boolean;
+  answerMode?: AnswerMode;
+  codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
@@ -57,6 +59,8 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   llmProvider: DEFAULT_LLM_PROVIDER,
   llmModel: 'deepseek-flash',
   llmThinkingEnabled: false,
+  answerMode: 'short',
+  codeLanguage: 'auto',
   temperature: 0.3,
   maxTokens: 500,
   overlayOpacity: 0.88,
@@ -187,6 +191,8 @@ export class StoreService {
       llmProvider: this.data.llmProvider,
       llmModel: this.data.llmModel,
       llmThinkingEnabled: Boolean(this.data.llmThinkingEnabled),
+      answerMode: this.data.answerMode || 'short',
+      codeLanguage: this.data.codeLanguage || 'auto',
       temperature: this.data.temperature,
       maxTokens: this.data.maxTokens,
       profile: { ...this.data.profile },
@@ -257,7 +263,7 @@ export class StoreService {
     return this.data.multiWorkspace;
   }
 
-  updateSettings(newSettings: AppSettings): AppSettings {
+  updateSettings(newSettings: Partial<AppSettings>): AppSettings {
     if (newSettings.apiKeys) {
       for (const [providerId, key] of Object.entries(newSettings.apiKeys)) {
         if (!getLlmProviderEntry(providerId)) continue;
@@ -285,6 +291,12 @@ export class StoreService {
     if (newSettings.llmModel) this.data.llmModel = newSettings.llmModel;
     if (typeof newSettings.llmThinkingEnabled === 'boolean') {
       this.data.llmThinkingEnabled = newSettings.llmThinkingEnabled;
+    }
+    if (newSettings.answerMode && ['short', 'detailed', 'simple'].includes(newSettings.answerMode)) {
+      this.data.answerMode = newSettings.answerMode;
+    }
+    if (newSettings.codeLanguage) {
+      this.data.codeLanguage = newSettings.codeLanguage;
     }
     if (typeof newSettings.temperature === 'number') this.data.temperature = newSettings.temperature;
     if (typeof newSettings.maxTokens === 'number') this.data.maxTokens = newSettings.maxTokens;

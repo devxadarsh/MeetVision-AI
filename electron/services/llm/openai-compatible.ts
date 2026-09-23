@@ -21,7 +21,7 @@ export interface OpenAiCompatibleChatOptions {
 export async function streamOpenAiCompatibleChat(
   options: OpenAiCompatibleChatOptions,
   onDelta: (text: string) => void
-): Promise<void> {
+): Promise<{ finishReason?: string }> {
   const body: Record<string, unknown> = {
     model: options.model,
     max_tokens: options.maxTokens,
@@ -57,6 +57,7 @@ export async function streamOpenAiCompatibleChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let finishReason: string | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -73,8 +74,12 @@ export async function streamOpenAiCompatibleChat(
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
         const data = JSON.parse(dataStr);
+        const choice = data?.choices?.[0];
+        if (typeof choice?.finish_reason === 'string') {
+          finishReason = choice.finish_reason;
+        }
         // Never surface chain-of-thought as answer bullets.
-        const text = data?.choices?.[0]?.delta?.content;
+        const text = choice?.delta?.content;
         if (typeof text === 'string' && text.length > 0) {
           onDelta(text);
         }
@@ -83,4 +88,6 @@ export async function streamOpenAiCompatibleChat(
       }
     }
   }
+
+  return { finishReason };
 }

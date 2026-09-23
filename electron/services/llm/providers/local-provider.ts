@@ -121,6 +121,11 @@ export class LocalProvider implements ILlmProvider {
       }
     }
 
+    // Vary the depth of the offline fallback by answer mode.
+    const modeLimit =
+      request.mode === 'detailed' ? bullets.length : request.mode === 'simple' ? 2 : 3;
+    bullets = bullets.slice(0, Math.max(1, modeLimit));
+
     const fullText = bullets.map((b) => `• ${b}`).join('\n');
     const words = fullText.split(' ');
 

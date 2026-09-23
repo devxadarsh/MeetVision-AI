@@ -18,7 +18,7 @@ export class OpenRouterProvider implements ILlmProvider {
     request: LlmProviderRequest,
     onDelta: (text: string) => void
   ): Promise<LlmStreamResult | void> {
-    await streamOpenAiCompatibleChat(
+    const result = await streamOpenAiCompatibleChat(
       {
         endpoint: OPENROUTER_ENDPOINT,
         apiKey: request.apiKey,
@@ -36,5 +36,7 @@ export class OpenRouterProvider implements ILlmProvider {
       },
       onDelta
     );
+
+    return { finishReason: result.finishReason };
   }
 }

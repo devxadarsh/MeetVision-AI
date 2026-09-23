@@ -22,6 +22,7 @@ import {
   ParakeetStatus,
   ParakeetDownloadProgress,
   LlmProviderInfo,
+  CodeLanguage,
 } from '@shared/ipc';
 import type { LlmProviderId } from '@shared/llm-provider-catalog';
 import {
@@ -91,6 +92,18 @@ function buildParakeetCards(platform: SttPlatform): ParakeetModelCard[] {
 
 /** Sentinel option value that reveals the free-text model id input. */
 const CUSTOM_MODEL_VALUE = '__custom__';
+
+const CODE_LANGUAGES: { value: CodeLanguage; label: string }[] = [
+  { value: 'auto', label: 'Auto (let the model choose)' },
+  { value: 'python', label: 'Python' },
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'typescript', label: 'TypeScript' },
+  { value: 'java', label: 'Java' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'csharp', label: 'C#' },
+  { value: 'go', label: 'Go' },
+  { value: 'rust', label: 'Rust' },
+];
 
 @Component({
   selector: 'app-settings',
@@ -183,6 +196,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly llmProvider = signal<LlmProviderId>('deepseek');
   readonly llmModel = signal('deepseek-flash');
   readonly llmThinkingEnabled = signal(false);
+  readonly codeLanguage = signal<CodeLanguage>('auto');
+  readonly codeLanguages = CODE_LANGUAGES;
   readonly temperature = signal(0.3);
   readonly maxTokens = signal(500);
 
@@ -369,6 +384,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.customLlmModel.set('');
     }
     this.llmThinkingEnabled.set(Boolean(settings.llmThinkingEnabled));
+    this.codeLanguage.set(settings.codeLanguage || 'auto');
     this.temperature.set(typeof settings.temperature === 'number' ? settings.temperature : 0.3);
     this.maxTokens.set(settings.maxTokens || 500);
 
@@ -687,6 +703,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.llmThinkingEnabled.set((event.target as HTMLInputElement).checked);
   }
 
+  onCodeLanguageChange(event: Event): void {
+    this.codeLanguage.set((event.target as HTMLSelectElement).value as CodeLanguage);
+  }
+
   onTemperatureChange(event: Event): void {
     const target = event.target as HTMLInputElement;
     this.temperature.set(parseFloat(target.value));
@@ -813,6 +833,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       llmProvider: this.llmProvider(),
       llmModel: this.effectiveLlmModel(),
       llmThinkingEnabled: this.llmThinkingEnabled(),
+      codeLanguage: this.codeLanguage(),
       temperature: this.temperature(),
       maxTokens: this.maxTokens(),
       overlayWidth: this.overlayWidth(),
@@ -882,6 +903,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.customModelMode.set(false);
     this.customLlmModel.set('');
     this.llmThinkingEnabled.set(false);
+    this.codeLanguage.set('auto');
     this.temperature.set(0.3);
     this.maxTokens.set(500);
     this.overlayWidth.set(380);

@@ -1,4 +1,4 @@
-import { Question, AnswerChunk, ContextProfile } from '@shared/ipc';
+import { Question, AnswerChunk, ContextProfile, CodeLanguage } from '@shared/ipc';
 import { DEFAULT_LLM_PROVIDER, LlmProviderId, getLlmProviderLabel } from '@shared/llm-provider-catalog';
 import { LlmRegistry } from './llm/llm-registry';
 import { LlmProviderRequest, LlmStreamResult } from './llm/llm-provider.interface';
@@ -12,6 +12,7 @@ export interface LlmStreamOptions {
   temperature?: number;
   maxTokens?: number;
   thinkingEnabled?: boolean;
+  codeLanguage?: CodeLanguage;
   knowledgeSnippets?: { title: string; snippet: string }[];
 }
 
@@ -30,12 +31,101 @@ interface BuiltPrompts {
   userPrompt: string;
 }
 
-const STREAM_TIMEOUT_MS = 30000;
+const STREAM_TIMEOUT_MS = 45000;
+
+type AnswerMode = 'short' | 'detailed' | 'simple';
 
 /**
- * Provider-agnostic LLM facade. Selects a provider from the registry, builds a
- * shared prompt, and streams the answer. Falls back to the offline local
- * generator when a cloud provider is unconfigured or errors.
+ * Question intent. The intent selects the answer's structure and a base token
+ * budget, so a system-design or coding question is not forced into talking-point
+ * bullets.
+ */
+type AnswerIntent = 'talking-points' | 'design' | 'coding';
+
+/** Per-mode guidance for talking-point answers. */
+const MODE_INSTRUCTIONS: Record<AnswerMode, { bullets: string; style: string }> = {
+  short: {
+    bullets: '3 bullet points',
+    style: 'Keep each bullet to one tight line (about 15 words) and lead with the single most useful fact.',
+  },
+  detailed: {
+    bullets: '5 to 7 bullet points',
+    style:
+      'Include concrete specifics such as numbers, names, ordered steps, trade-offs, and a short example or caveat where it helps.',
+  },
+  simple: {
+    bullets: '2 to 3 bullet points',
+    style:
+      'Use plain, everyday language and short sentences. Avoid jargon and unexplained acronyms; if a term is needed, explain it in a few words.',
+  },
+};
+
+const INTENT_KEYWORDS: Record<'coding' | 'design', string[]> = {
+  coding: [
+    'array', 'string', 'linked list', 'tree', 'graph', 'dynamic programming', 'dp',
+    'binary search', 'sort', 'sorting', 'complexity', 'big o', 'leetcode', 'write a function',
+    'implement', 'algorithm', 'recursion', 'recursive', 'hashmap', 'hash map', 'stack', 'queue',
+    'heap', 'regex', 'debug', 'compile', 'syntax error', 'time limit', 'two pointer',
+    'sliding window', 'bfs', 'dfs', 'trie', 'memoization', 'greedy',
+  ],
+  design: [
+    'design', 'architect', 'architecture', 'system design', 'scal', 'throughput', 'latency',
+    'trade-off', 'tradeoff', 'microservice', 'database', 'schema', 'cache', 'load balanc',
+    'kafka', 'redis', 'queue', 'sharding', 'partition', 'consistency', 'availability',
+    'cap theorem', 'cdn', 'rate limit', 'api gateway', 'deploy', 'migration', 'capacity',
+    'fault toleran', 'message broker', 'service mesh', 'high availability', 'replication',
+  ],
+};
+
+/** Base output-token ceiling per intent; the mode scales it up or down. */
+const INTENT_BASE_TOKENS: Record<AnswerIntent, number> = {
+  'talking-points': 500,
+  design: 1300,
+  coding: 1000,
+};
+
+const MODE_TOKEN_FACTOR: Record<AnswerMode, number> = { short: 0.8, simple: 0.65, detailed: 1.3 };
+
+const HARD_TOKEN_CEILING = 1800;
+const MIN_TOKEN_FLOOR = 300;
+
+const CODE_LANGUAGE_LABELS: Record<CodeLanguage, string> = {
+  auto: 'Auto',
+  python: 'Python',
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  java: 'Java',
+  cpp: 'C++',
+  csharp: 'C#',
+  go: 'Go',
+  rust: 'Rust',
+};
+
+/** Scores the question text and picks an answer intent. */
+export function classifyQuestion(text: string): AnswerIntent {
+  const haystack = (text || '').toLowerCase();
+  const score = (words: string[]) => words.reduce((n, w) => (haystack.includes(w) ? n + 1 : n), 0);
+
+  const coding = score(INTENT_KEYWORDS.coding);
+  const design = score(INTENT_KEYWORDS.design);
+
+  if (coding === 0 && design === 0) return 'talking-points';
+  if (coding >= design) return 'coding';
+  return 'design';
+}
+
+/** Dynamic output-token ceiling: intent base × mode factor, floored at the user's setting. */
+export function tokensFor(intent: AnswerIntent, mode: AnswerMode, userCeiling?: number): number {
+  const base = Math.round(INTENT_BASE_TOKENS[intent] * MODE_TOKEN_FACTOR[mode]);
+  const userFloor = Math.min(Math.max(userCeiling || 0, MIN_TOKEN_FLOOR), HARD_TOKEN_CEILING);
+  return Math.max(Math.min(base, HARD_TOKEN_CEILING), userFloor);
+}
+
+/**
+ * Provider-agnostic LLM facade. Classifies the question, selects a matching
+ * prompt/token budget, then streams the answer through the chosen provider.
+ * Falls back to the offline local generator when a cloud provider is
+ * unconfigured or errors.
  */
 export class LlmService implements ILlmService {
   private readonly registry = new LlmRegistry();
@@ -56,7 +146,8 @@ export class LlmService implements ILlmService {
     onChunk: (chunk: AnswerChunk) => void
   ): Promise<void> {
     const mode = options.mode || 'short';
-    const { systemPrompt, userPrompt } = this.buildPrompts(question, recentTranscript, options);
+    const intent = classifyQuestion(question.text);
+    const { systemPrompt, userPrompt } = this.buildPrompts(question, recentTranscript, options, intent);
 
     const requestedId = options.providerId || DEFAULT_LLM_PROVIDER;
     let provider = this.registry.get(requestedId);
@@ -81,7 +172,7 @@ export class LlmService implements ILlmService {
       knowledgeSnippets: options.knowledgeSnippets,
       model: options.model || 'deepseek-flash',
       temperature: typeof options.temperature === 'number' ? options.temperature : 0.3,
-      maxTokens: options.maxTokens || 500,
+      maxTokens: tokensFor(intent, mode, options.maxTokens),
       apiKey: options.apiKey,
       thinkingEnabled: options.thinkingEnabled,
     };
@@ -111,34 +202,35 @@ export class LlmService implements ILlmService {
     result: LlmStreamResult | void,
     onChunk: (chunk: AnswerChunk) => void
   ): void {
-    onChunk({ questionId, delta: '', isComplete: true, mode, code: result?.code });
+    const finish = result?.finishReason;
+    onChunk({
+      questionId,
+      delta: '',
+      isComplete: true,
+      mode,
+      code: result?.code,
+      truncated: finish === 'length' || finish === 'max_tokens',
+    });
   }
 
   private buildPrompts(
     question: Question,
     recentTranscript: string[],
-    options: LlmStreamOptions
+    options: LlmStreamOptions,
+    intent: AnswerIntent
   ): BuiltPrompts {
     const mode = options.mode || 'short';
     const profile = options.profile;
+    const tone = profile?.tone || 'concise';
 
-    const rolePrompt = profile?.role ? `User Role: ${profile.role}.\n` : '';
-    const projectPrompt = profile?.projectSummary ? `Project Context: ${profile.projectSummary}\n` : '';
-    const glossaryPrompt = profile?.glossary?.length
-      ? `Domain Glossary: ${profile.glossary.join(', ')}.\n`
-      : '';
-    const tonePrompt = profile?.tone ? `Tone: ${profile.tone.toUpperCase()}.\n` : '';
-
-    const systemPrompt = `You are MeetVision AI, an expert meeting assistant providing concise talking points to the user in real time.
-${rolePrompt}${projectPrompt}${glossaryPrompt}${tonePrompt}
-Mode: ${mode.toUpperCase()}.
-Formatting rules:
-- Provide 3 to 5 concise bullet points.
-- Tailor the depth and perspective to the user's role and domain context.
-- Maintain the specified tone (${profile?.tone || 'concise'}).
-- Each bullet point must begin with "• ".
-- If the question asks for code or syntax, include a short code block at the end.
-- Do not include greetings, pleasantries, or markdown headers.`;
+    const contextBlock = [
+      profile?.role ? `User Role: ${profile.role}.` : '',
+      profile?.projectSummary ? `Project Context: ${profile.projectSummary}` : '',
+      profile?.glossary?.length ? `Domain Glossary: ${profile.glossary.join(', ')}.` : '',
+      profile?.tone ? `Tone: ${profile.tone.toUpperCase()}.` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     const knowledgeText =
       options.knowledgeSnippets && options.knowledgeSnippets.length > 0
@@ -153,8 +245,59 @@ Formatting rules:
         : '';
 
     return {
-      systemPrompt,
+      systemPrompt: this.systemPromptFor(intent, mode, contextBlock, tone, options.codeLanguage),
       userPrompt: `${knowledgeText}${contextText}Question asked: "${question.text}"`,
     };
+  }
+
+  private systemPromptFor(
+    intent: AnswerIntent,
+    mode: AnswerMode,
+    contextBlock: string,
+    tone: string,
+    codeLanguage?: CodeLanguage
+  ): string {
+    const context = contextBlock ? `\n${contextBlock}\n` : '';
+
+    if (intent === 'coding') {
+      const language = codeLanguage || 'auto';
+      const fence = language === 'auto' ? '' : language;
+      const languageRule =
+        language === 'auto'
+          ? 'Choose the most widely expected language for the question and state it (prefer Python unless the question names a language).'
+          : `Write the solution in ${CODE_LANGUAGE_LABELS[language]}.`;
+
+      return `You are MeetVision AI, a senior engineer answering a CODING / DSA question in real time.${context}
+Respond in this exact order:
+- Approach: 2-4 bullets (each beginning with "• ") explaining the algorithm and why it works.
+- Code: exactly ONE complete, runnable solution inside a single fenced block, e.g. \`\`\`${fence} ... \`\`\`. Do not split the solution across multiple blocks and do not use pseudo-code.
+- Complexity: one line, "Time: O(...) | Space: O(...)".
+- Edge cases: 2-4 bullets.
+${languageRule}
+Maintain a ${tone} tone. No greetings or filler.`;
+    }
+
+    if (intent === 'design') {
+      return `You are MeetVision AI, a senior software architect answering a SYSTEM DESIGN question in real time.${context}
+Respond in short labelled sections:
+- Overview: 1-2 sentences.
+- Key components: 3-5 bullets (each beginning with "• ").
+- Data flow: how a request moves through the system, 2-4 bullets.
+- Trade-offs: consistency vs availability, cost, and scaling, 2-4 bullets.
+- Risks & edge cases: 2-4 bullets.
+Add at most ONE fenced code or schema block (\`\`\`lang ... \`\`\`) if it materially helps.
+Be concrete and specific with real numbers or named technologies where possible. Maintain a ${tone} tone. No greetings or filler.`;
+    }
+
+    const modeSpec = MODE_INSTRUCTIONS[mode];
+    return `You are MeetVision AI, an expert meeting assistant providing real-time talking points.${context}
+Answer depth: ${mode.toUpperCase()} — provide ${modeSpec.bullets}.
+Style:
+- ${modeSpec.style}
+- Tailor the depth and perspective to the user's role and domain context.
+- Maintain the specified tone (${tone}).
+- Each bullet point must begin with "• ".
+- Lead with the direct answer. No greetings, filler, or markdown headers.
+- If the question asks for code or syntax, include a short fenced code block at the end.`;
   }
 }

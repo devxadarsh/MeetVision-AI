@@ -420,6 +420,12 @@
                         <pre><code>{{ q.answer.code }}</code></pre>
                       </div>
                     }
+
+                    @if (q.answer.truncated) {
+                      <div class="answer-truncated">
+                        Answer may be truncated — press Regenerate for a longer version.
+                      </div>
+                    }
                   </div>
                 }
               </article>
@@ -491,6 +497,18 @@
                               title="Clear this row's text"
                             >
                               ⌫ Clear
+                            </button>
+                          }
+
+                          <!-- Re-answer an already answered row (replaces its answer) -->
+                          @if (answeredSegmentIds().has(seg.id)) {
+                            <button
+                              type="button"
+                              class="seg-action-btn"
+                              (click)="reanswerForSegment(seg)"
+                              title="Generate a new answer, replacing the current one"
+                            >
+                              ↻ Re-answer
                             </button>
                           }
 
@@ -1065,6 +1083,12 @@
                           <pre><code>{{ q.answer.code }}</code></pre>
                         </div>
                       }
+
+                      @if (q.answer.truncated) {
+                        <div class="v2-answer-truncated">
+                          Answer may be truncated — press Regenerate for a longer version.
+                        </div>
+                      }
                     </div>
                   }
                 </article>
@@ -1131,6 +1155,18 @@
                                 title="Clear this row's text"
                               >
                                 ⌫ Clear
+                              </button>
+                            }
+
+                            <!-- Re-answer an already answered row (replaces its answer) -->
+                            @if (answeredSegmentIds().has(seg.id)) {
+                              <button
+                                type="button"
+                                class="seg-action-btn"
+                                (click)="reanswerForSegment(seg)"
+                                title="Generate a new answer, replacing the current one"
+                              >
+                                ↻ Re-answer
                               </button>
                             }
 

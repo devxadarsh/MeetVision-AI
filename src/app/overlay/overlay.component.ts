@@ -18,7 +18,67 @@ import {
   AnswerChunk,
   MeetingSummary,
   TranscriptionMode,
+  AnswerMode,
+  AppSettings,
 } from '@shared/ipc';
+
+type AnswerModeLabel = 'Short' | 'Detailed' | 'Simple';
+
+const ANSWER_MODE_TO_LABEL: Record<AnswerMode, AnswerModeLabel> = {
+  short: 'Short',
+  detailed: 'Detailed',
+  simple: 'Simple',
+};
+
+const ANSWER_MODE_FROM_LABEL: Record<AnswerModeLabel, AnswerMode> = {
+  Short: 'short',
+  Detailed: 'detailed',
+  Simple: 'simple',
+};
+
+interface ParsedAnswer {
+  bullets: string[];
+  code?: string;
+}
+
+/**
+ * Parses streamed answer text into bullet lines and fenced code blocks. Text
+ * outside ``` fences becomes bullets (markdown heading/bold markers stripped);
+ * code inside fences is collected into a single snippet so coding and
+ * system-design answers are not shredded into one bullet per line.
+ */
+function parseAnswerMarkdown(raw: string): ParsedAnswer {
+  const text = raw || '';
+  const codeParts: string[] = [];
+  let prose = '';
+  let lastIndex = 0;
+  const fenceRe = /```[^\n]*\n?([\s\S]*?)(?:```|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = fenceRe.exec(text)) !== null) {
+    prose += text.slice(lastIndex, match.index) + '\n';
+    const block = match[1].replace(/\s+$/, '');
+    if (block.trim()) codeParts.push(block);
+    lastIndex = fenceRe.lastIndex;
+  }
+  prose += text.slice(lastIndex);
+
+  const bullets = prose
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) =>
+      line
+        .replace(/^#{1,6}\s*/, '')
+        .replace(/^[•\-\*]\s*/, '')
+        .replace(/\*\*/g, '')
+        .replace(/`/g, '')
+        .trim()
+    )
+    .filter((line) => line.length > 0);
+
+  return { bullets, code: codeParts.length > 0 ? codeParts.join('\n\n') : undefined };
+}
 
 interface DummyQuestionTemplate {
   text: string;
@@ -337,6 +397,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
         const mode = await this.ipcService.getTranscriptionMode();
         this.transcriptionMode.set(mode);
       }
+      if (settings.answerMode && ANSWER_MODE_TO_LABEL[settings.answerMode]) {
+        this.selectedMode.set(ANSWER_MODE_TO_LABEL[settings.answerMode]);
+      }
       const perms = await this.ipcService.getMacosPermissions();
       this.hasMicPermission.set(perms.microphone === 'granted');
       if (!settings.hasAcceptedConsent) {
@@ -450,8 +513,11 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }).catch(() => {});
 
     // Reactive App Settings changed (e.g. user selected new engine/model in Settings panel and clicked Save)
-    this.unsubscribeSettingsChanged = this.ipcService.onSettingsChanged(async () => {
+    this.unsubscribeSettingsChanged = this.ipcService.onSettingsChanged(async (settings: AppSettings) => {
       try {
+        if (settings?.answerMode && ANSWER_MODE_TO_LABEL[settings.answerMode]) {
+          this.selectedMode.set(ANSWER_MODE_TO_LABEL[settings.answerMode]);
+        }
         const status = await this.ipcService.getSessionStatus();
         this.sttProvider.set(status.provider);
         this.sttModel.set(status.model || '');
@@ -719,11 +785,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
     const updated = existing + chunk.delta;
     this.rawBufferMap.set(chunk.questionId, updated);
 
-    // Extract bullet points from accumulated text
-    const lines = updated.split('\n').filter((l) => l.trim().length > 0);
-    const bullets = lines
-      .map((l) => l.replace(/^[•\-\*]\s*/, '').trim())
-      .filter((b) => b.length > 0);
+    // Parse the accumulated markdown-ish text into bullets + code blocks so
+    // design/coding answers are not shredded into one bullet per line.
+    const parsed = parseAnswerMarkdown(updated);
+    const bullets = parsed.bullets;
 
     const isComplete = Boolean(chunk.isComplete);
     if (isComplete) {
@@ -750,7 +815,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
               questionId: q.id,
               mode: chunk.mode || q.answer?.mode || 'short',
               bullets: bullets.length > 0 ? bullets : q.answer?.bullets || [],
-              code: chunk.code || q.answer?.code,
+              code: parsed.code || chunk.code || q.answer?.code,
+              truncated: chunk.truncated || q.answer?.truncated,
               createdAt: q.answer?.createdAt || Date.now(),
             },
           };
@@ -822,7 +888,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }
     this.showToast('Generating answer talking points...');
     if (this.isElectron()) {
-      await this.ipcService.answerQuestion(questionId);
+      await this.ipcService.answerQuestion({
+        questionId,
+        mode: ANSWER_MODE_FROM_LABEL[this.selectedMode()],
+      });
     }
   }
 
@@ -830,6 +899,47 @@ export class OverlayComponent implements OnInit, OnDestroy {
   startNewRowFrom(seg: TranscriptSegment): void {
     this.startDraftRow(seg.speaker);
     this.showToast('New transcript row ready');
+  }
+
+  /**
+   * Re-generates the answer for an already-answered row, clearing the existing
+   * answer so the new one streams into the same card.
+   */
+  async reanswerForSegment(segment: TranscriptSegment): Promise<void> {
+    const questionId = `q-${segment.id}`;
+    const mode = ANSWER_MODE_FROM_LABEL[this.selectedMode()];
+    this.rawBufferMap.delete(questionId);
+
+    this.questions.update((list) =>
+      list.map((item) =>
+        item.id === questionId
+          ? {
+              ...item,
+              status: 'answering',
+              answer: { questionId: item.id, mode, bullets: [], createdAt: Date.now() },
+            }
+          : item
+      )
+    );
+
+    // Reflect progress on the transcript row (shows "Answering..." then "View Answer").
+    this.answeredSegmentIds.update((set) => {
+      const copy = new Set(set);
+      copy.delete(segment.id);
+      return copy;
+    });
+    this.answeringSegmentIds.update((set) => new Set(set).add(segment.id));
+
+    this.showToast(`Re-answering (${mode})...`);
+
+    if (this.isElectron()) {
+      await this.ipcService.answerQuestion({
+        questionId,
+        text: segment.text,
+        speaker: segment.speaker,
+        mode,
+      });
+    }
   }
 
   /** Clears a row's text. If it is the active row, it resets to a fresh live row. */
@@ -901,6 +1011,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
         questionId: `q-${segment.id}`,
         text: segment.text,
         speaker: segment.speaker,
+        mode: ANSWER_MODE_FROM_LABEL[this.selectedMode()],
       });
     }
   }
@@ -1042,11 +1153,15 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   cycleAnswerMode(): void {
-    const modes: Array<'Short' | 'Detailed' | 'Simple'> = ['Short', 'Detailed', 'Simple'];
+    const modes: AnswerModeLabel[] = ['Short', 'Detailed', 'Simple'];
     const current = this.selectedMode();
     const next = modes[(modes.indexOf(current) + 1) % modes.length];
     this.selectedMode.set(next);
     this.showToast(`Mode set to: ${next}`);
+    if (this.isElectron()) {
+      // Persist so voice-triggered answers use the same depth.
+      this.ipcService.setSettings({ answerMode: ANSWER_MODE_FROM_LABEL[next] }).catch(() => {});
+    }
   }
 
   simulateNewQuestion(): void {

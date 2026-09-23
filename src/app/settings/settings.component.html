@@ -868,7 +868,10 @@
                 MeetVision AI will capture it as <strong>Meeting Audio</strong>!
               </li>
               <li>
-                <strong>Option 2 (Default Input):</strong> If your meeting audio plays through your speakers/headset, MeetVision AI captures audio via your selected input device.
+                <strong>Option 2 (Meeting audio through your speakers/headset?):</strong> MeetVision AI never
+                uses the default microphone as meeting audio, because that would record your own voice.
+                Install a loopback device and select it above, or switch the overlay to
+                <strong>Everyone</strong> mode to capture your microphone instead.
               </li>
             </ol>
           </div>
@@ -1015,6 +1018,25 @@
             </div>
           }
         }
+
+        <!-- Code Answer Language (coding / DSA questions) -->
+        <div class="form-group">
+          <label for="code-language" class="form-label">Code Answer Language</label>
+          <select
+            id="code-language"
+            class="form-select"
+            [value]="codeLanguage()"
+            (change)="onCodeLanguageChange($event)"
+          >
+            @for (lang of codeLanguages; track lang.value) {
+              <option [value]="lang.value">{{ lang.label }}</option>
+            }
+          </select>
+          <span class="field-hint">
+            Used when a question asks for code or a DSA solution. The model picks the answer format
+            automatically from the question type (talking points, system design, or coding).
+          </span>
+        </div>
 
         <!-- Temperature Slider -->
         <div class="form-group">

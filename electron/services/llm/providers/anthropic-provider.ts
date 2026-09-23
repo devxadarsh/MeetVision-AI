@@ -38,6 +38,7 @@ export class AnthropicProvider implements ILlmProvider {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let finishReason: string | undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -56,10 +57,15 @@ export class AnthropicProvider implements ILlmProvider {
           if (data.type === 'content_block_delta' && data.delta?.text) {
             onDelta(data.delta.text);
           }
+          if (data.type === 'message_delta' && typeof data.delta?.stop_reason === 'string') {
+            finishReason = data.delta.stop_reason;
+          }
         } catch {
           // Ignore partial stream line parsing.
         }
       }
     }
+
+    return { finishReason };
   }
 }

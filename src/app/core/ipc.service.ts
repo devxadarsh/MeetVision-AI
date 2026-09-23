@@ -18,6 +18,7 @@ import {
   ParakeetModelType,
   ParakeetDownloadProgress,
   LlmProviderInfo,
+  AnswerQuestionPayload,
 } from '@shared/ipc';
 import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 
@@ -35,6 +36,8 @@ export class IpcService {
     llmProvider: 'deepseek',
     llmModel: 'deepseek-flash',
     llmThinkingEnabled: false,
+    answerMode: 'short',
+    codeLanguage: 'auto',
     temperature: 0.3,
     maxTokens: 500,
     overlayOpacity: 0.88,
@@ -339,7 +342,7 @@ export class IpcService {
     return this.api.regenerateAnswer(payload);
   }
 
-  async answerQuestion(payload?: string | { questionId?: string; text?: string; speaker?: string }): Promise<boolean> {
+  async answerQuestion(payload?: string | AnswerQuestionPayload): Promise<boolean> {
     if (!this.api) return true;
     return this.api.answerQuestion(payload);
   }
@@ -357,7 +360,7 @@ export class IpcService {
     return this.api.getSettings();
   }
 
-  async setSettings(settings: AppSettings): Promise<AppSettings> {
+  async setSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
     if (!this.api) {
       this.mockSettings = { ...this.mockSettings, ...settings };
       for (const listener of this.mockSettingsListeners) {

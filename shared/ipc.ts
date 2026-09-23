@@ -37,11 +37,27 @@ export interface MeetingSummary {
   markdown: string;
 }
 
+export type AnswerMode = 'short' | 'detailed' | 'simple';
+
+/** Preferred language for coding/DSA answers. */
+export type CodeLanguage =
+  | 'auto'
+  | 'python'
+  | 'javascript'
+  | 'typescript'
+  | 'java'
+  | 'cpp'
+  | 'csharp'
+  | 'go'
+  | 'rust';
+
 export interface Answer {
   questionId: string;
-  mode: 'short' | 'detailed' | 'simple';
+  mode: AnswerMode;
   bullets: string[];
   code?: string;
+  /** True when the provider stopped because it hit the output-token cap. */
+  truncated?: boolean;
   createdAt: number;
 }
 
@@ -49,13 +65,22 @@ export interface AnswerChunk {
   questionId: string;
   delta: string;
   isComplete?: boolean;
-  mode?: 'short' | 'detailed' | 'simple';
+  mode?: AnswerMode;
   code?: string;
+  truncated?: boolean;
 }
 
 export interface RegeneratePayload {
   questionId: string;
-  mode: 'short' | 'detailed' | 'simple';
+  mode: AnswerMode;
+}
+
+export interface AnswerQuestionPayload {
+  questionId?: string;
+  text?: string;
+  speaker?: string;
+  /** Answer depth for this request; falls back to settings.answerMode. */
+  mode?: AnswerMode;
 }
 
 export interface TranscriptSegment {
@@ -166,6 +191,10 @@ export interface AppSettings {
   llmProvider: LlmProviderId;
   llmModel: string;
   llmThinkingEnabled?: boolean;
+  /** Preferred answer depth; drives the prompt and the voice-triggered answers. */
+  answerMode?: AnswerMode;
+  /** Preferred language for coding/DSA answers. */
+  codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
@@ -335,11 +364,11 @@ export interface ElectronAPI {
   onQuestionNew: (callback: (question: Question) => void) => () => void;
   onAnswerChunk: (callback: (chunk: AnswerChunk) => void) => () => void;
   regenerateAnswer: (payload: RegeneratePayload) => Promise<void>;
-  answerQuestion: (payload?: string | { questionId?: string; text?: string; speaker?: string }) => Promise<boolean>;
+  answerQuestion: (payload?: string | AnswerQuestionPayload) => Promise<boolean>;
   resetSession: () => Promise<boolean>;
   // Settings & Profile channels (Milestone 4)
   getSettings: () => Promise<AppSettings>;
-  setSettings: (settings: AppSettings) => Promise<AppSettings>;
+  setSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   openSettings: () => Promise<boolean>;
   onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void;
   onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void) => () => void;
