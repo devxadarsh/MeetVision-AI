@@ -1921,6 +1921,19 @@
         border: 1px solid rgba(56, 189, 248, 0.25);
         border-radius: 6px;
 
+        &.paused {
+          border-color: rgba(245, 158, 11, 0.4);
+          background: rgba(245, 158, 11, 0.05);
+
+          .card-progress-header .progress-title {
+            color: #f59e0b;
+          }
+
+          .progress-track .progress-fill {
+            background: linear-gradient(90deg, #f59e0b, #d97706);
+          }
+        }
+
         .card-progress-header {
           display: flex;
           align-items: center;
@@ -1951,12 +1964,20 @@
             background: linear-gradient(90deg, #38bdf8, #818cf8);
             border-radius: 2px;
             transition: width 0.15s ease-out;
+
+            &.paused {
+              background: linear-gradient(90deg, #f59e0b, #d97706);
+            }
           }
         }
       }
 
       .model-installed-status {
         font-size: 11px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
 
         .installed-tag {
           color: #4ade80;
@@ -1965,6 +1986,16 @@
 
         .missing-tag {
           color: #94a3b8;
+        }
+
+        .model-runtime-tag {
+          padding: 1px 6px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          color: #cbd5e1;
+          font-family: var(--pf-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+          font-size: 10px;
+          letter-spacing: 0.02em;
         }
       }
 
@@ -1996,23 +2027,165 @@
             color: #fca5a5;
           }
         }
+
+        .btn-reveal {
+          background: rgba(99, 102, 241, 0.1);
+          border: 1px solid rgba(99, 102, 241, 0.25);
+          color: #a5b4fc;
+          font-size: 11px;
+          cursor: pointer;
+          border-radius: 4px;
+          padding: 4px 8px;
+          transition: all 0.15s ease;
+
+          &:hover:not(:disabled) {
+            background: rgba(99, 102, 241, 0.22);
+            border-color: #818cf8;
+            color: #c7d2fe;
+          }
+
+          &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+          }
+        }
+
+        .btn-pause {
+          background: rgba(245, 158, 11, 0.12);
+          border: 1px solid rgba(245, 158, 11, 0.35);
+          color: #fbbf24;
+          font-size: 11px;
+          cursor: pointer;
+          border-radius: 4px;
+          padding: 4px 8px;
+          transition: all 0.15s ease;
+
+          &:hover {
+            background: rgba(245, 158, 11, 0.25);
+            border-color: #f59e0b;
+            color: #fef3c7;
+          }
+        }
+
+        .btn-cancel {
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          color: #f87171;
+          font-size: 11px;
+          cursor: pointer;
+          border-radius: 4px;
+          padding: 4px 8px;
+          transition: all 0.15s ease;
+
+          &:hover {
+            background: rgba(239, 68, 68, 0.22);
+            border-color: #ef4444;
+            color: #fca5a5;
+          }
+        }
+
+        .btn-resume {
+          background: linear-gradient(135deg, #059669, #10b981);
+          border: 1px solid #10b981;
+          color: #ffffff;
+          font-weight: 500;
+
+          &:hover {
+            background: linear-gradient(135deg, #047857, #059669);
+          }
+        }
       }
     }
   }
 
   .download-progress-container {
     margin-top: 14px;
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.35);
     border: 1px solid rgba(56, 189, 248, 0.3);
     border-radius: 6px;
     padding: 10px 12px;
 
+    &.paused {
+      border-color: rgba(245, 158, 11, 0.4);
+      background: rgba(245, 158, 11, 0.05);
+
+      .progress-header .progress-info .progress-status-text {
+        color: #f59e0b;
+      }
+    }
+
     .progress-header {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       font-size: 12px;
-      color: #38bdf8;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
+
+      .progress-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+
+        .progress-status-text {
+          font-weight: 600;
+          color: #38bdf8;
+        }
+
+        .progress-stats-text {
+          color: #94a3b8;
+          font-family: ui-monospace, monospace;
+          font-size: 11.5px;
+        }
+      }
+
+      .progress-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        .btn-pause-inline,
+        .btn-resume-inline,
+        .btn-cancel-inline {
+          font-size: 11px;
+          padding: 3px 8px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .btn-pause-inline {
+          background: rgba(245, 158, 11, 0.15);
+          border: 1px solid rgba(245, 158, 11, 0.35);
+          color: #fbbf24;
+
+          &:hover {
+            background: rgba(245, 158, 11, 0.28);
+            border-color: #f59e0b;
+          }
+        }
+
+        .btn-resume-inline {
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid rgba(16, 185, 129, 0.35);
+          color: #34d399;
+
+          &:hover {
+            background: rgba(16, 185, 129, 0.28);
+            border-color: #10b981;
+          }
+        }
+
+        .btn-cancel-inline {
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          color: #f87171;
+
+          &:hover {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: #ef4444;
+          }
+        }
+      }
     }
 
     .progress-track {
@@ -2025,6 +2198,10 @@
         height: 100%;
         background: linear-gradient(90deg, #38bdf8, #2563eb);
         transition: width 0.2s ease;
+
+        &.paused {
+          background: linear-gradient(90deg, #f59e0b, #d97706);
+        }
       }
     }
   }

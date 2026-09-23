@@ -22,6 +22,12 @@ import {
   ParakeetStatus,
   ParakeetDownloadProgress,
 } from '@shared/ipc';
+import {
+  STT_MODEL_CATALOG,
+  artifactTotalBytes,
+  formatModelBytes,
+} from '@shared/stt-model-catalog';
+import type { SttPlatform } from '@shared/stt-model-catalog';
 
 export interface ParakeetModelCard {
   id: ParakeetModelType;
@@ -32,6 +38,53 @@ export interface ParakeetModelCard {
   ramRequirement: string;
   fileSizeStr: string;
   badge: string;
+  /** Inference runtime backing this model on the host platform. */
+  runtime: string;
+  /** False when the artifact choice has not been validated on real hardware. */
+  verified: boolean;
+  /** True when no artifact is mapped for the host platform. */
+  unsupported: boolean;
+}
+
+const PARAKEET_BADGES: Record<ParakeetModelType, string> = {
+  'parakeet-flash': 'Ultra Low Latency',
+  'parakeet-tdt-v2': 'Balanced English',
+  'parakeet-tdt-v3': '25 Languages',
+  'parakeet-ctc-1.1b': 'Flagship 1.1B',
+  'nemotron-speech-3.5': 'Streaming English',
+  'nemotron-3.5-multilingual': 'Multilingual',
+};
+
+/**
+ * Best-effort platform key for the renderer. Used only for display sizes: both
+ * macOS arches and both Windows arches share identical payloads, so a rough
+ * guess is safe. The authoritative key arrives with `ParakeetStatus.platform`.
+ */
+function detectRendererPlatform(): SttPlatform {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (/Windows/i.test(ua)) {
+    return /Win64|x64|WOW64/i.test(ua) ? 'win32-x64' : 'win32-ia32';
+  }
+  return 'darwin-arm64';
+}
+
+function buildParakeetCards(platform: SttPlatform): ParakeetModelCard[] {
+  return STT_MODEL_CATALOG.map((entry) => {
+    const artifact = entry.artifacts[platform];
+    return {
+      id: entry.id,
+      name: entry.name,
+      subtitle: entry.subtitle,
+      icon: entry.icon,
+      description: entry.description,
+      ramRequirement: entry.ramRequirement,
+      fileSizeStr: artifact ? `~${formatModelBytes(artifactTotalBytes(artifact))}` : 'Not available',
+      badge: PARAKEET_BADGES[entry.id],
+      runtime: artifact?.runtime ?? 'unsupported',
+      verified: artifact?.verified ?? false,
+      unsupported: !artifact,
+    };
+  });
 }
 
 @Component({
@@ -92,69 +145,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly parakeetStatus = signal<ParakeetStatus | null>(null);
   readonly parakeetDownloadProgress = signal<ParakeetDownloadProgress | null>(null);
   readonly isDownloadingParakeet = signal(false);
+  /** True when running on macOS — used to label the reveal button correctly. */
+  readonly isMacOS = typeof navigator !== 'undefined'
+    ? /mac/i.test(navigator.userAgent) && !/windows|linux/i.test(navigator.userAgent)
+    : false;
+  /** Tracks which model is currently being revealed in Finder/Explorer */
+  readonly parakeetRevealingModel = signal<ParakeetModelType | null>(null);
+  readonly isParakeetPaused = signal(false);
 
-  readonly parakeetModelsList: ParakeetModelCard[] = [
-    {
-      id: 'parakeet-flash',
-      name: 'Parakeet Flash',
-      subtitle: 'Ultra-low latency · English',
-      icon: '⚡',
-      description: 'Ultra-low latency streaming FastConformer optimized for instantaneous live meeting subtitles.',
-      ramRequirement: '~2 GB RAM',
-      fileSizeStr: '~1.0 GB',
-      badge: 'Ultra Low Latency',
-    },
-    {
-      id: 'parakeet-tdt-v2',
-      name: 'Parakeet TDT v2',
-      subtitle: 'Balanced · English',
-      icon: '⚖️',
-      description: 'Next-generation FastConformer Token-and-Duration Transducer v2 for high-speed, high-accuracy English transcription.',
-      ramRequirement: '~2.5 GB RAM',
-      fileSizeStr: '~1.2 GB',
-      badge: 'Balanced English',
-    },
-    {
-      id: 'parakeet-tdt-v3',
-      name: 'Parakeet TDT v3',
-      subtitle: 'Multilingual · 25 languages',
-      icon: '🌍',
-      description: 'NVIDIA multilingual FastConformer-TDT v3. Transcribes multilingual, code-switching, and global meeting dialogue across 25+ languages.',
-      ramRequirement: '~3 GB RAM',
-      fileSizeStr: '~1.4 GB',
-      badge: '25 Languages',
-    },
-    {
-      id: 'parakeet-ctc-1.1b',
-      name: 'Parakeet CTC 1.1B',
-      subtitle: 'Maximum accuracy · Technical',
-      icon: '🎯',
-      description: 'NVIDIA flagship heavyweight FastConformer. Highest accuracy and best technical domain vocabulary recall.',
-      ramRequirement: '~4 GB RAM',
-      fileSizeStr: '~2.2 GB',
-      badge: 'Flagship 1.1B',
-    },
-    {
-      id: 'nemotron-speech-3.5',
-      name: 'Nemotron Speech 3.5',
-      subtitle: 'Enterprise · Technical',
-      icon: '🏢',
-      description: 'NVIDIA NeMo Nemotron Speech 3.5. Enterprise-grade hybrid ASR with advanced punctuation and technical vocabulary grounding.',
-      ramRequirement: '~4.5 GB RAM',
-      fileSizeStr: '~1.4 GB',
-      badge: 'Enterprise ASR',
-    },
-    {
-      id: 'nemotron-3.5-multilingual',
-      name: 'Nemotron 3.5 Multilingual',
-      subtitle: 'Multilingual · Code-switching',
-      icon: '🌍',
-      description: 'NVIDIA Nemotron 3.5 Multilingual. State-of-the-art multilingual model supporting 25+ languages and seamless code-switching.',
-      ramRequirement: '~5 GB RAM',
-      fileSizeStr: '~1.6 GB',
-      badge: 'Multilingual',
-    },
-  ];
+  /** Platform key reported by the main process, used to resolve artifact sizes. */
+  readonly parakeetPlatform = signal<SttPlatform>(detectRendererPlatform());
+
+  readonly parakeetModelsList = computed<ParakeetModelCard[]>(() =>
+    buildParakeetCards(this.parakeetPlatform())
+  );
 
   // macOS Permissions
   readonly macosPermissions = signal<MacosPermissions | null>(null);
@@ -221,7 +225,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       };
     }
 
-    const meta = this.parakeetModelsList.find((m) => m.id === parakeetM) || this.parakeetModelsList[0];
+    const meta = this.parakeetModelsList().find((m) => m.id === parakeetM) || this.parakeetModelsList()[0];
     const isParakeetInstalled = installedParakeet.includes(meta.id);
     if (isParakeetInstalled) {
       return {
@@ -255,11 +259,21 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
     this.unsubscribeParakeetDownloadProgress = this.ipcService.onParakeetDownloadProgress((progress) => {
       this.parakeetDownloadProgress.set(progress);
-      if (progress.completed || progress.error) {
+      if (progress.paused) {
         this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(true);
+        this.showToast('Parakeet model download paused.', 'info');
+      } else if (progress.cancelled) {
+        this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(false);
+        this.parakeetDownloadProgress.set(null);
+        this.showToast('Parakeet model download cancelled.', 'info');
+      } else if (progress.completed || progress.error) {
+        this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(false);
         this.refreshParakeetStatus();
         if (progress.completed) {
-          const meta = this.parakeetModelsList.find((m) => m.id === progress.model);
+          const meta = this.parakeetModelsList().find((m) => m.id === progress.model);
           const name = meta ? meta.name : progress.model;
           this.showToast(`Parakeet model ${name} downloaded successfully!`, 'success');
         } else if (progress.error) {
@@ -394,41 +408,83 @@ export class SettingsComponent implements OnInit, OnDestroy {
     try {
       const status = await this.ipcService.getParakeetStatus();
       this.parakeetStatus.set(status);
+      const platform = this.toSttPlatform(status.platform);
+      if (platform) this.parakeetPlatform.set(platform);
     } catch (err) {
       console.warn('[SettingsComponent] Failed to get Parakeet status:', err);
+    }
+  }
+
+  private toSttPlatform(value?: string): SttPlatform | null {
+    switch (value) {
+      case 'darwin-arm64':
+      case 'darwin-x64':
+      case 'win32-x64':
+      case 'win32-ia32':
+        return value;
+      default:
+        return null;
     }
   }
 
   async downloadParakeetModel(modelId: ParakeetModelType): Promise<void> {
     if (this.isDownloadingParakeet()) return;
 
-    const meta = this.parakeetModelsList.find((m) => m.id === modelId) || this.parakeetModelsList[0];
-    const totalMb = modelId === 'parakeet-ctc-1.1b'
-      ? 2200
-      : modelId === 'nemotron-3.5-multilingual'
-        ? 1600
-        : modelId === 'nemotron-speech-3.5' || modelId === 'parakeet-tdt-v3'
-          ? 1400
-          : modelId === 'parakeet-tdt-v2'
-            ? 1200
-            : 1000;
+    const meta = this.parakeetModelsList().find((m) => m.id === modelId) || this.parakeetModelsList()[0];
+    const artifact = STT_MODEL_CATALOG.find((entry) => entry.id === modelId)?.artifacts[
+      this.parakeetPlatform()
+    ];
+    const totalMb = artifact ? Math.round(artifactTotalBytes(artifact) / (1024 * 1024)) : 0;
+
+    const wasPaused = this.isParakeetPaused() && this.parakeetDownloadProgress()?.model === modelId;
+    const currentProgress = this.parakeetDownloadProgress();
 
     this.isDownloadingParakeet.set(true);
-    this.parakeetDownloadProgress.set({
-      model: modelId,
-      percent: 0,
-      downloadedMb: 0,
-      totalMb,
-      completed: false,
-    });
+    this.isParakeetPaused.set(false);
+
+    if (!wasPaused || !currentProgress) {
+      this.parakeetDownloadProgress.set({
+        model: modelId,
+        percent: 0,
+        downloadedMb: 0,
+        totalMb,
+        completed: false,
+      });
+    }
 
     try {
-      this.showToast(`Starting download for ${meta.name} (${meta.fileSizeStr})...`, 'info');
+      this.showToast(
+        wasPaused
+          ? `Resuming download for ${meta.name}...`
+          : `Starting download for ${meta.name} (${meta.fileSizeStr})...`,
+        'info'
+      );
       await this.ipcService.downloadParakeetModel(modelId);
     } catch (err: unknown) {
       this.isDownloadingParakeet.set(false);
       const msg = err instanceof Error ? err.message : String(err);
       this.showToast(`Failed downloading Parakeet model: ${msg}`, 'info');
+    }
+  }
+
+  async pauseParakeetDownload(): Promise<void> {
+    try {
+      await this.ipcService.pauseParakeetDownload();
+      this.isDownloadingParakeet.set(false);
+      this.isParakeetPaused.set(true);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to pause download:', err);
+    }
+  }
+
+  async cancelParakeetDownload(): Promise<void> {
+    try {
+      await this.ipcService.cancelParakeetDownload();
+      this.isDownloadingParakeet.set(false);
+      this.isParakeetPaused.set(false);
+      this.parakeetDownloadProgress.set(null);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to cancel download:', err);
     }
   }
 
@@ -443,6 +499,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
       }
     } catch {
       this.showToast('Failed to delete Parakeet model.', 'info');
+    }
+  }
+
+  async revealParakeetModel(modelId: ParakeetModelType): Promise<void> {
+    this.parakeetRevealingModel.set(modelId);
+    try {
+      const ok = await this.ipcService.revealParakeetModel(modelId);
+      if (!ok) {
+        this.showToast('Model file not found. It may have been moved or deleted.', 'info');
+      }
+    } catch {
+      this.showToast('Failed to open file location.', 'info');
+    } finally {
+      this.parakeetRevealingModel.set(null);
     }
   }
 

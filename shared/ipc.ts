@@ -106,6 +106,10 @@ export interface ParakeetDownloadProgress {
   totalMb: number;
   completed: boolean;
   error?: string;
+  /** True when the download was intentionally paused (the .part file is preserved for resume) */
+  paused?: boolean;
+  /** True when the download was cancelled (the .part file has been deleted) */
+  cancelled?: boolean;
 }
 
 export interface ParakeetStatus {
@@ -116,6 +120,22 @@ export interface ParakeetStatus {
   isDownloading?: boolean;
   downloadProgress?: number;
   downloadingModel?: ParakeetModelType;
+  /** Host platform key used to resolve model artifacts (e.g. `darwin-arm64`). */
+  platform?: string;
+  /** Inference runtime backing the selected model (e.g. `coreml`, `sherpa-onnx`). */
+  runtime?: string;
+  /** Human-readable runtime name for the settings UI. */
+  runtimeName?: string;
+  /** False when the runtime binary is missing on this machine. */
+  runtimeAvailable?: boolean;
+  /** Explains why a runtime is unavailable, or how the model was resolved. */
+  runtimeDetail?: string;
+  /** True when every required file for the selected model exists locally. */
+  currentModelInstalled?: boolean;
+  /** Bytes required by the selected model on this platform (0 when unsupported). */
+  currentModelBytes?: number;
+  /** Caveats about the resolved artifact (provenance, unverified variant, ...). */
+  currentModelNotes?: string[];
 }
 
 export interface AudioFrame {
@@ -249,6 +269,9 @@ export const IPC_CHANNELS = {
   PARAKEET_STATUS_GET: 'parakeet:status-get',
   PARAKEET_MODEL_DOWNLOAD: 'parakeet:model-download',
   PARAKEET_MODEL_DELETE: 'parakeet:model-delete',
+  PARAKEET_MODEL_REVEAL: 'parakeet:model-reveal',
+  PARAKEET_MODEL_PAUSE: 'parakeet:model-pause',
+  PARAKEET_MODEL_CANCEL: 'parakeet:model-cancel',
   PARAKEET_DOWNLOAD_PROGRESS: 'parakeet:download-progress',
   MACOS_PERMISSIONS_GET: 'macos:permissions-get',
   MACOS_PERMISSION_REQUEST: 'macos:permission-request',
@@ -289,6 +312,9 @@ export interface ElectronAPI {
   getParakeetStatus: () => Promise<ParakeetStatus>;
   downloadParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
   deleteParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  revealParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  pauseParakeetDownload: () => Promise<boolean>;
+  cancelParakeetDownload: () => Promise<boolean>;
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void) => () => void;
   // Pluggable STT Engines
   getSttEngines: () => Promise<STTEngineInfo[]>;

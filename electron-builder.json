@@ -10,6 +10,13 @@
     "dist-electron/**/*",
     "package.json"
   ],
+  "extraResources": [
+    {
+      "from": "electron/resources/bin",
+      "to": "bin",
+      "filter": ["**/*"]
+    }
+  ],
   "mac": {
     "category": "public.app-category.productivity",
     "target": [

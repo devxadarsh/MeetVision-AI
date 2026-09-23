@@ -13,6 +13,8 @@
     "build": "npm run build:ng && npm run build:electron",
     "build:ng": "ng build",
     "build:electron": "node electron/build.mjs",
+    "build:native": "bash electron/native/parakeet-coreml/build.sh",
+    "verify:stt-catalog": "node scripts/verify-stt-catalog.mjs",
     "package": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",

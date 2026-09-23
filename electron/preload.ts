@@ -158,6 +158,15 @@ const api: ElectronAPI = {
   deleteParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_DELETE, modelId);
   },
+  revealParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_REVEAL, modelId);
+  },
+  pauseParakeetDownload: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_PAUSE);
+  },
+  cancelParakeetDownload: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_CANCEL);
+  },
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, progress: ParakeetDownloadProgress) => {
       callback(progress);

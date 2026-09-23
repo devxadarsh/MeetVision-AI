@@ -253,6 +253,21 @@ export class IpcService {
     return this.api.deleteParakeetModel(modelId);
   }
 
+  async revealParakeetModel(modelId: ParakeetModelType): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.revealParakeetModel(modelId);
+  }
+
+  async pauseParakeetDownload(): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.pauseParakeetDownload();
+  }
+
+  async cancelParakeetDownload(): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.cancelParakeetDownload();
+  }
+
   onParakeetDownloadProgress(callback: (progress: ParakeetDownloadProgress) => void): (() => void) {
     if (!this.api) return () => {};
     return this.api.onParakeetDownloadProgress(callback);

@@ -402,7 +402,7 @@
             <!-- Parakeet / NeMo Model Cards Grid -->
             <label class="form-label" style="margin-top: 14px;">MeetVision AI — Transcription Models for NVIDIA Parakeet</label>
             <div class="model-cards-grid">
-              @for (m of parakeetModelsList; track m.id) {
+              @for (m of parakeetModelsList(); track m.id) {
                 <div class="model-box" [class.selected]="parakeetModel() === m.id">
                   <div class="model-info">
                     <div class="model-title-line">
@@ -418,24 +418,33 @@
                     <p class="model-summary">{{ m.description }}</p>
 
                     <div class="model-installed-status">
-                      @if (parakeetStatus()?.installedModels?.includes(m.id)) {
+                      @if (m.unsupported) {
+                        <span class="missing-tag">Not available on this platform</span>
+                      } @else if (parakeetStatus()?.installedModels?.includes(m.id)) {
                         <span class="installed-tag">✓ Ready to use • {{ m.fileSizeStr }}</span>
                       } @else {
                         <span class="missing-tag">Not installed ({{ m.fileSizeStr }})</span>
                       }
+                      @if (!m.unsupported) {
+                        <span class="model-runtime-tag" [title]="m.verified ? 'Validated on real hardware' : 'Artifact not yet validated on real hardware'">
+                          {{ m.runtime }}{{ m.verified ? '' : ' • unverified' }}
+                        </span>
+                      }
                     </div>
 
                     <!-- In-Card Download Progress Bar -->
-                    @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
-                      <div class="card-download-progress">
+                    @if ((isDownloadingParakeet() || isParakeetPaused()) && parakeetDownloadProgress()?.model === m.id) {
+                      <div class="card-download-progress" [class.paused]="isParakeetPaused()">
                         <div class="card-progress-header">
-                          <span class="progress-title">Downloading {{ m.name }}...</span>
+                          <span class="progress-title">
+                            {{ isParakeetPaused() ? '⏸️ Paused' : '⬇️ Downloading' }} {{ m.name }}...
+                          </span>
                           <span class="progress-stats">
                             {{ parakeetDownloadProgress()?.downloadedMb }} MB / {{ parakeetDownloadProgress()?.totalMb }} MB ({{ parakeetDownloadProgress()?.percent }}%)
                           </span>
                         </div>
                         <div class="progress-track">
-                          <div class="progress-fill" [style.width.%]="parakeetDownloadProgress()?.percent"></div>
+                          <div class="progress-fill" [class.paused]="isParakeetPaused()" [style.width.%]="parakeetDownloadProgress()?.percent"></div>
                         </div>
                       </div>
                     }
@@ -453,6 +462,19 @@
                       </button>
                       <button
                         type="button"
+                        class="btn-reveal btn-sm"
+                        [disabled]="parakeetRevealingModel() === m.id"
+                        [title]="isMacOS ? 'Show ' + m.name + ' in Finder' : 'Show ' + m.name + ' in File Explorer'"
+                        (click)="revealParakeetModel(m.id)"
+                      >
+                        @if (parakeetRevealingModel() === m.id) {
+                          ⏳ Opening...
+                        } @else {
+                          {{ isMacOS ? '🔍 Show in Finder' : '📁 Show in Explorer' }}
+                        }
+                      </button>
+                      <button
+                        type="button"
                         class="btn-delete btn-sm"
                         title="Delete {{ m.name }} model to free disk space"
                         (click)="deleteParakeetModel(m.id)"
@@ -460,18 +482,50 @@
                         🗑️ Delete
                       </button>
                     } @else {
-                      <button
-                        type="button"
-                        class="btn-primary btn-sm"
-                        [disabled]="isDownloadingParakeet()"
-                        (click)="downloadParakeetModel(m.id)"
-                      >
-                        @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
-                          Downloading ({{ parakeetDownloadProgress()?.percent }}%)...
-                        } @else {
-                          Download ({{ m.fileSizeStr }})
-                        }
-                      </button>
+                      @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
+                        <button
+                          type="button"
+                          class="btn-pause btn-sm"
+                          title="Pause downloading {{ m.name }}"
+                          (click)="pauseParakeetDownload()"
+                        >
+                          ⏸️ Pause
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-cancel btn-sm"
+                          title="Cancel downloading {{ m.name }}"
+                          (click)="cancelParakeetDownload()"
+                        >
+                          ❌ Cancel
+                        </button>
+                      } @else if (isParakeetPaused() && parakeetDownloadProgress()?.model === m.id) {
+                        <button
+                          type="button"
+                          class="btn-primary btn-sm btn-resume"
+                          title="Resume downloading {{ m.name }}"
+                          (click)="downloadParakeetModel(m.id)"
+                        >
+                          ▶️ Resume ({{ parakeetDownloadProgress()?.percent }}%)
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-cancel btn-sm"
+                          title="Cancel downloading {{ m.name }}"
+                          (click)="cancelParakeetDownload()"
+                        >
+                          ❌ Cancel
+                        </button>
+                      } @else {
+                        <button
+                          type="button"
+                          class="btn-primary btn-sm"
+                          [disabled]="isDownloadingParakeet() || m.unsupported"
+                          (click)="downloadParakeetModel(m.id)"
+                        >
+                          ⬇️ Download ({{ m.fileSizeStr }})
+                        </button>
+                      }
                     }
                   </div>
                 </div>
@@ -479,14 +533,49 @@
             </div>
 
             <!-- Parakeet Download Progress Bar (Global fallback) -->
-            @if (isDownloadingParakeet() && parakeetDownloadProgress(); as prog) {
-              <div class="download-progress-container">
+            @if ((isDownloadingParakeet() || isParakeetPaused()) && parakeetDownloadProgress(); as prog) {
+              <div class="download-progress-container" [class.paused]="isParakeetPaused()">
                 <div class="progress-header">
-                  <span>Downloading NVIDIA Parakeet ({{ prog.model }})...</span>
-                  <span>{{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)</span>
+                  <div class="progress-info">
+                    <span class="progress-status-text">
+                      {{ isParakeetPaused() ? '⏸️ Paused' : '⬇️ Downloading' }} NVIDIA Parakeet ({{ prog.model }})...
+                    </span>
+                    <span class="progress-stats-text">
+                      {{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)
+                    </span>
+                  </div>
+                  <div class="progress-actions">
+                    @if (isDownloadingParakeet()) {
+                      <button
+                        type="button"
+                        class="btn-pause-inline"
+                        title="Pause download"
+                        (click)="pauseParakeetDownload()"
+                      >
+                        ⏸️ Pause
+                      </button>
+                    } @else if (isParakeetPaused()) {
+                      <button
+                        type="button"
+                        class="btn-resume-inline"
+                        title="Resume download"
+                        (click)="downloadParakeetModel(prog.model)"
+                      >
+                        ▶️ Resume
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      class="btn-cancel-inline"
+                      title="Cancel download"
+                      (click)="cancelParakeetDownload()"
+                    >
+                      ❌ Cancel
+                    </button>
+                  </div>
                 </div>
                 <div class="progress-track">
-                  <div class="progress-fill" [style.width.%]="prog.percent"></div>
+                  <div class="progress-fill" [class.paused]="isParakeetPaused()" [style.width.%]="prog.percent"></div>
                 </div>
               </div>
             }

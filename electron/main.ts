@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, session, systemPreferences } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
 import * as path from 'path';
 import * as url from 'url';
 import {
@@ -848,6 +848,41 @@ function registerIpcHandlers(): void {
       }
     }
   );
+
+  ipcMain.handle(
+    IPC_CHANNELS.PARAKEET_MODEL_REVEAL,
+    async (_event, modelId: ParakeetModelType): Promise<boolean> => {
+      try {
+        const filePath = sttService.parakeetEngine.revealModelInFolder(modelId);
+        if (filePath) {
+          shell.showItemInFolder(filePath);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.warn('[Main] Parakeet model reveal error:', err);
+        return false;
+      }
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.PARAKEET_MODEL_PAUSE, async (): Promise<boolean> => {
+    try {
+      return sttService.parakeetEngine.pauseDownload();
+    } catch (err) {
+      console.warn('[Main] Parakeet pause download error:', err);
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.PARAKEET_MODEL_CANCEL, async (): Promise<boolean> => {
+    try {
+      return sttService.parakeetEngine.cancelDownload();
+    } catch (err) {
+      console.warn('[Main] Parakeet cancel download error:', err);
+      return false;
+    }
+  });
 
   // Pluggable STT Engines
   ipcMain.handle(IPC_CHANNELS.STT_ENGINES_GET, async () => {
