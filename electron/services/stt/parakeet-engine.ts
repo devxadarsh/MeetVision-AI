@@ -98,7 +98,17 @@ export const PARAKEET_MODELS: ParakeetModelMeta[] = STT_MODEL_CATALOG.map((entry
 });
 
 const DOWNLOAD_TIMEOUT_MS = 30000;
-const INFERENCE_TIMEOUT_MS = 20000;
+/**
+ * Per-utterance timeout. A warm helper run completes in well under a second, but
+ * the very first call for a model compiles its Core ML graphs and pulls several
+ * hundred MB through the caches — measured at ~32 s on an M-series Mac. A short
+ * timeout kills that process before it can print anything, which surfaces as
+ * "Command failed" with empty stderr. `warmUpRuntime()` normally pays that cost
+ * at start-up so real utterances stay on the fast path.
+ */
+const INFERENCE_TIMEOUT_MS = 120000;
+/** Warm-up is a deliberate cold load, so it gets a longer budget. */
+const WARMUP_TIMEOUT_MS = 180000;
 
 /**
  * FluidAudio rejects audio shorter than ASRConstants.minimumAudioDurationSeconds
@@ -804,7 +814,66 @@ export class ParakeetEngine implements ISTTEngine {
       );
     } else if (!this.getParakeetStatus().currentModelInstalled) {
       console.warn(`[ParakeetEngine] ${meta?.name} weights are not installed yet.`);
+    } else {
+      this.warmUpRuntime();
     }
+  }
+
+  /**
+   * Loads the current model once in the background so its Core ML graphs are
+   * compiled and the weights are in the page cache. Without this the first
+   * utterance after a start or model switch pays the full cold load (~32 s).
+   * The helper is a one-shot process, so this warms the on-disk and OS caches
+   * rather than keeping a model resident. Output is discarded.
+   */
+  private warmUpRuntime(): void {
+    const { artifact, runtime, usingLegacy, legacyFile } = this.resolveEffectiveRuntime();
+    if (!runtime.isAvailable()) return;
+    if (!usingLegacy && artifact && !this.isArtifactInstalled(this.currentModel, artifact)) return;
+
+    const activeModel = this.currentModel;
+    const warmupWav = path.join(os.tmpdir(), `parakeet-warmup-${Date.now()}.wav`);
+
+    try {
+      // Silence that still meets FluidAudio's 0.3 s minimum duration.
+      fs.writeFileSync(warmupWav, encodeWav(new Int16Array(MIN_INFERENCE_SAMPLES), 16000));
+    } catch (err) {
+      console.warn('[ParakeetEngine] Warm-up skipped (could not write temp wav):', err);
+      return;
+    }
+
+    const request = {
+      modelDir: this.modelDirFor(activeModel),
+      wavPath: warmupWav,
+      timeoutMs: WARMUP_TIMEOUT_MS,
+      modelFile: legacyFile,
+      coreMlEngine: artifact?.engine,
+      modelRoot: artifact?.modelRoot,
+    };
+
+    console.log(
+      `[ParakeetEngine] Warming up ${activeModel} (first load compiles Core ML graphs and can take ~30s)...`
+    );
+
+    this.enqueueInference(() => runtime.transcribe(request))
+      .then(() => {
+        console.log(`[ParakeetEngine] ${activeModel} runtime warm.`);
+      })
+      .catch((error) => {
+        const execError = error as Error & { stderr?: string };
+        console.warn(
+          '[ParakeetEngine] Warm-up failed:',
+          execError.message,
+          execError.stderr ? `\n  stderr: ${execError.stderr.trim()}` : ''
+        );
+      })
+      .finally(() => {
+        try {
+          fs.unlinkSync(warmupWav);
+        } catch {
+          // ignore
+        }
+      });
   }
 
   async stop(): Promise<void> {
@@ -1025,16 +1094,21 @@ export class ParakeetEngine implements ISTTEngine {
 
     if (tracker) tracker.isBusy = true;
 
-    this.enqueueInference(() =>
-      activeRuntime.transcribe({
-        modelDir: this.modelDirFor(this.currentModel),
-        wavPath: tempWav,
-        timeoutMs: INFERENCE_TIMEOUT_MS,
-        modelFile: legacyFile,
-        coreMlEngine: artifact?.engine,
-        modelRoot: artifact?.modelRoot,
-      })
-    )
+    // Snapshot everything the inference needs *now*. The task below runs only
+    // once the queue drains, and the user may have switched models by then —
+    // reading `this.currentModel` inside the closure would pair one model's
+    // directory with another model's engine.
+    const activeModel = this.currentModel;
+    const inferenceRequest = {
+      modelDir: this.modelDirFor(activeModel),
+      wavPath: tempWav,
+      timeoutMs: INFERENCE_TIMEOUT_MS,
+      modelFile: legacyFile,
+      coreMlEngine: artifact?.engine,
+      modelRoot: artifact?.modelRoot,
+    };
+
+    this.enqueueInference(() => activeRuntime.transcribe(inferenceRequest))
       .then((text) => {
         if (tracker) tracker.isBusy = false;
         const cleanText = (text || '').trim();
