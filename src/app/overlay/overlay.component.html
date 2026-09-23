@@ -448,7 +448,7 @@
 
           <!-- Streaming Transcript Feed -->
           <div class="transcript-scroll">
-            @if (displayedTranscriptSegments().length === 0 && !displayedInterim()) {
+            @if (displayedTranscriptSegments().length === 0 && !displayedInterim() && !displayedDraftRow()) {
               <div class="empty-state">
                 <div class="empty-icon">🎙️</div>
                 <div class="empty-title">Waiting for meeting speech...</div>
@@ -471,57 +471,104 @@
                       [class.speaker-other]="seg.speaker === 'Other'"
                       [class.speaker-you]="seg.speaker === 'You'"
                     >
-                      <span class="seg-time">[{{ formatSegmentTime(seg.startMs) }}]</span>
-                      @if (transcriptionMode() === 'everyone' && seg.speaker) {
-                        <span
-                          class="seg-speaker"
-                          [class.speaker-other]="seg.speaker === 'Other'"
-                          [class.speaker-you]="seg.speaker === 'You'"
-                        >{{ seg.speaker }}:</span>
-                      }
-                      <span class="seg-text">{{ seg.text }}</span>
+                      <div class="seg-head">
+                        <span class="seg-time">[{{ formatSegmentTime(seg.startMs) }}]</span>
 
-                      <!-- Direct Row Action: Give Answer Button -->
-                      <button
-                        type="button"
-                        class="seg-give-answer-btn"
-                        [class.answering]="answeringSegmentIds().has(seg.id)"
-                        [class.answered]="answeredSegmentIds().has(seg.id)"
-                        (click)="giveAnswerForSegment(seg)"
-                        [title]="answeredSegmentIds().has(seg.id) ? 'Click to view synthesized answer' : 'Generate talking points for this statement'"
-                      >
-                        @if (answeringSegmentIds().has(seg.id)) {
-                          ⚡ Answering...
-                        } @else if (answeredSegmentIds().has(seg.id)) {
-                          ✓ View Answer ↗
-                        } @else {
-                          ⚡ Give Answer
+                        <div class="seg-actions">
+                          @if (!answeredSegmentIds().has(seg.id) && !answeringSegmentIds().has(seg.id)) {
+                            <button
+                              type="button"
+                              class="seg-action-btn"
+                              (click)="startNewRowFrom(seg)"
+                              title="Start a new row for the next speech"
+                            >
+                              ＋ Row
+                            </button>
+                            <button
+                              type="button"
+                              class="seg-action-btn"
+                              (click)="clearRowText(seg)"
+                              title="Clear this row's text"
+                            >
+                              ⌫ Clear
+                            </button>
+                          }
+
+                          <!-- Direct Row Action: Give Answer Button (pinned top-right) -->
+                          <button
+                            type="button"
+                            class="seg-give-answer-btn"
+                            [class.answering]="answeringSegmentIds().has(seg.id)"
+                            [class.answered]="answeredSegmentIds().has(seg.id)"
+                            (click)="giveAnswerForSegment(seg)"
+                            [title]="answeredSegmentIds().has(seg.id) ? 'Click to view synthesized answer' : 'Generate talking points for this statement'"
+                          >
+                            @if (answeringSegmentIds().has(seg.id)) {
+                              ⚡ Answering...
+                            } @else if (answeredSegmentIds().has(seg.id)) {
+                              ✓ View Answer ↗
+                            } @else {
+                              ⚡ Give Answer
+                            }
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="seg-body">
+                        @if (transcriptionMode() === 'everyone' && seg.speaker) {
+                          <span
+                            class="seg-speaker"
+                            [class.speaker-other]="seg.speaker === 'Other'"
+                            [class.speaker-you]="seg.speaker === 'You'"
+                          >{{ seg.speaker }}:</span>
                         }
-                      </button>
+                        <span class="seg-text">{{ seg.text }}</span>
+
+                        <!-- Live typing tail + cursor on the active row -->
+                        @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
+                          @if (inlineInterimTail()) {
+                            <span class="seg-text-interim"> {{ inlineInterimTail() }}</span>
+                          }
+                          <span class="typing-cursor">▎</span>
+                        }
+                      </div>
                     </div>
                   }
                 }
 
-                <!-- Active Interim / Live Typing Token Stream -->
-                @if (displayedInterim(); as interim) {
-                  @if (interim.text && interim.text.trim() && interim.text !== '...') {
-                    <div
-                      class="transcript-segment interim"
-                      [class.speaker-other]="interim.speaker === 'Other'"
-                      [class.speaker-you]="interim.speaker === 'You'"
-                    >
-                      <span class="seg-badge-live">Live</span>
-                      @if (transcriptionMode() === 'everyone' && interim.speaker) {
+                <!-- Active Interim: standalone row only when nothing is accumulating it -->
+                <!-- Draft row: opens after Give Answer (or first speech) and fills with the next utterance -->
+                @if (displayedDraftRow(); as draft) {
+                  <div
+                    class="transcript-segment final draft"
+                    [class.speaker-other]="draft.speaker === 'Other'"
+                    [class.speaker-you]="draft.speaker === 'You'"
+                  >
+                    <div class="seg-head">
+                      <span class="seg-time">[{{ formatSegmentTime(draft.startMs) }}]</span>
+                      <button
+                        type="button"
+                        class="seg-give-answer-btn"
+                        disabled
+                        title="Waiting for speech before an answer can be generated"
+                      >
+                        ⚡ Give Answer
+                      </button>
+                    </div>
+                    <div class="seg-body">
+                      @if (transcriptionMode() === 'everyone' && draft.speaker) {
                         <span
                           class="seg-speaker"
-                          [class.speaker-other]="interim.speaker === 'Other'"
-                          [class.speaker-you]="interim.speaker === 'You'"
-                        >{{ interim.speaker }}:</span>
+                          [class.speaker-other]="draft.speaker === 'Other'"
+                          [class.speaker-you]="draft.speaker === 'You'"
+                        >{{ draft.speaker }}:</span>
                       }
-                      <span class="seg-text-interim">{{ interim.text }}</span>
+                      @if (draft.text) {
+                        <span class="seg-text">{{ draft.text }}</span>
+                      }
                       <span class="typing-cursor">▎</span>
                     </div>
-                  }
+                  </div>
                 }
               </div>
             }
@@ -1041,7 +1088,7 @@
             </div>
 
             <div class="v2-transcript-body">
-              @if (displayedTranscriptSegments().length === 0 && !displayedInterim()) {
+              @if (displayedTranscriptSegments().length === 0 && !displayedInterim() && !displayedDraftRow()) {
                 <div class="v2-empty-hero">
                   <div class="v2-empty-glyph">🎙️</div>
                   <div class="v2-empty-heading">Waiting for Audio...</div>
@@ -1064,57 +1111,103 @@
                         [class.speaker-other]="seg.speaker === 'Other'"
                         [class.speaker-you]="seg.speaker === 'You'"
                       >
-                        <span class="v2-seg-time">{{ formatSegmentTime(seg.startMs) }}</span>
-                        @if (transcriptionMode() === 'everyone' && seg.speaker) {
-                          <span
-                            class="v2-seg-speaker"
-                            [class.speaker-other]="seg.speaker === 'Other'"
-                            [class.speaker-you]="seg.speaker === 'You'"
-                          >{{ seg.speaker }}:</span>
-                        }
-                        <span class="v2-seg-body">{{ seg.text }}</span>
+                        <div class="v2-seg-head">
+                          <span class="v2-seg-time">{{ formatSegmentTime(seg.startMs) }}</span>
 
-                        <!-- Direct Row Action: Give Answer Button -->
-                        <button
-                          type="button"
-                          class="v2-seg-give-answer-btn"
-                          [class.answering]="answeringSegmentIds().has(seg.id)"
-                          [class.answered]="answeredSegmentIds().has(seg.id)"
-                          (click)="giveAnswerForSegment(seg)"
-                          [title]="answeredSegmentIds().has(seg.id) ? 'Click to view synthesized answer' : 'Generate talking points for this statement'"
-                        >
-                          @if (answeringSegmentIds().has(seg.id)) {
-                            ⚡ Answering...
-                          } @else if (answeredSegmentIds().has(seg.id)) {
-                            ✓ View Answer ↗
-                          } @else {
-                            ⚡ Give Answer
+                          <div class="seg-actions">
+                            @if (!answeredSegmentIds().has(seg.id) && !answeringSegmentIds().has(seg.id)) {
+                              <button
+                                type="button"
+                                class="seg-action-btn"
+                                (click)="startNewRowFrom(seg)"
+                                title="Start a new row for the next speech"
+                              >
+                                ＋ Row
+                              </button>
+                              <button
+                                type="button"
+                                class="seg-action-btn"
+                                (click)="clearRowText(seg)"
+                                title="Clear this row's text"
+                              >
+                                ⌫ Clear
+                              </button>
+                            }
+
+                            <!-- Direct Row Action: Give Answer Button (pinned top-right) -->
+                            <button
+                              type="button"
+                              class="v2-seg-give-answer-btn"
+                              [class.answering]="answeringSegmentIds().has(seg.id)"
+                              [class.answered]="answeredSegmentIds().has(seg.id)"
+                              (click)="giveAnswerForSegment(seg)"
+                              [title]="answeredSegmentIds().has(seg.id) ? 'Click to view synthesized answer' : 'Generate talking points for this statement'"
+                            >
+                              @if (answeringSegmentIds().has(seg.id)) {
+                                ⚡ Answering...
+                              } @else if (answeredSegmentIds().has(seg.id)) {
+                                ✓ View Answer ↗
+                              } @else {
+                                ⚡ Give Answer
+                              }
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="v2-seg-main">
+                          @if (transcriptionMode() === 'everyone' && seg.speaker) {
+                            <span
+                              class="v2-seg-speaker"
+                              [class.speaker-other]="seg.speaker === 'Other'"
+                              [class.speaker-you]="seg.speaker === 'You'"
+                            >{{ seg.speaker }}:</span>
                           }
-                        </button>
+                          <span class="v2-seg-body">{{ seg.text }}</span>
+
+                          <!-- Live typing tail + cursor on the active row -->
+                          @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
+                            @if (inlineInterimTail()) {
+                              <span class="v2-interim-body"> {{ inlineInterimTail() }}</span>
+                            }
+                            <span class="v2-cursor-caret">▋</span>
+                          }
+                        </div>
                       </div>
                     }
                   }
 
-                  <!-- Active Interim / Live Typing Token Stream -->
-                  @if (displayedInterim(); as interim) {
-                    @if (interim.text && interim.text.trim() && interim.text !== '...') {
-                      <div
-                        class="v2-stream-item live"
-                        [class.speaker-other]="interim.speaker === 'Other'"
-                        [class.speaker-you]="interim.speaker === 'You'"
-                      >
-                        <span class="v2-live-tag">LIVE</span>
-                        @if (transcriptionMode() === 'everyone' && interim.speaker) {
+                  <!-- Draft row: opens after Give Answer (or first speech) and fills with the next utterance -->
+                  @if (displayedDraftRow(); as draft) {
+                    <div
+                      class="v2-stream-item final draft"
+                      [class.speaker-other]="draft.speaker === 'Other'"
+                      [class.speaker-you]="draft.speaker === 'You'"
+                    >
+                      <div class="v2-seg-head">
+                        <span class="v2-seg-time">{{ formatSegmentTime(draft.startMs) }}</span>
+                        <button
+                          type="button"
+                          class="v2-seg-give-answer-btn"
+                          disabled
+                          title="Waiting for speech before an answer can be generated"
+                        >
+                          ⚡ Give Answer
+                        </button>
+                      </div>
+                      <div class="v2-seg-main">
+                        @if (transcriptionMode() === 'everyone' && draft.speaker) {
                           <span
                             class="v2-seg-speaker"
-                            [class.speaker-other]="interim.speaker === 'Other'"
-                            [class.speaker-you]="interim.speaker === 'You'"
-                          >{{ interim.speaker }}:</span>
+                            [class.speaker-other]="draft.speaker === 'Other'"
+                            [class.speaker-you]="draft.speaker === 'You'"
+                          >{{ draft.speaker }}:</span>
                         }
-                        <span class="v2-interim-body">{{ interim.text }}</span>
+                        @if (draft.text) {
+                          <span class="v2-seg-body">{{ draft.text }}</span>
+                        }
                         <span class="v2-cursor-caret">▋</span>
                       </div>
-                    }
+                    </div>
                   }
                 </div>
               }

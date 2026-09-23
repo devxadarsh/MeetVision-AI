@@ -944,25 +944,77 @@
             [value]="llmProvider()"
             (change)="onLlmProviderChange($event)"
           >
-            <option value="local">Local Streaming Generator (Instant / Offline)</option>
-            <option value="anthropic">Anthropic Claude (Official Claude Messages API)</option>
+            @for (provider of llmProviders(); track provider.id) {
+              <option [value]="provider.id">{{ provider.label }}</option>
+            }
           </select>
+          @if (activeLlmProvider(); as provider) {
+            <span class="field-hint">{{ provider.description }}</span>
+          }
         </div>
 
-        <!-- Claude Model -->
+        <!-- Model Identifier -->
         <div class="form-group">
           <label for="llm-model" class="form-label">Model Identifier</label>
           <select
             id="llm-model"
             class="form-select"
-            [value]="llmModel()"
+            [value]="selectLlmModel()"
             (change)="onLlmModelChange($event)"
           >
-            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
-            <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fastest)</option>
-            <option value="claude-3-opus-20240229">Claude 3 Opus (Deep Analysis)</option>
+            @for (model of availableLlmModels(); track model.id) {
+              <option [value]="model.id">{{ model.label }}</option>
+            }
+            @if (activeLlmProvider()?.allowCustomModel) {
+              <option [value]="customModelValue">Custom model id…</option>
+            }
           </select>
+          @if (activeLlmProvider()?.allowCustomModel && customModelMode()) {
+            <input
+              type="text"
+              class="form-input mono"
+              placeholder="e.g. mistralai/mistral-large"
+              [value]="customLlmModel()"
+              (input)="onCustomLlmModelChange($event)"
+            />
+            <span class="field-hint">
+              Enter any model id supported by {{ activeLlmProvider()?.label }}.
+            </span>
+          }
+          @if (activeLlmProvider(); as provider) {
+            @if (provider.requiresApiKey && !hasKey(provider.id)) {
+              <span class="field-hint">
+                No API key configured for {{ provider.label }}. Add one in the API Keys tab, or answers fall back to the offline generator.
+              </span>
+            }
+          }
         </div>
+
+        <!-- Reasoning Mode (provider-specific) -->
+        @if (activeLlmProvider(); as provider) {
+          @if (provider.supportsReasoningToggle) {
+            <div class="form-group">
+              <div class="label-row">
+                <label for="llm-reasoning" class="form-label">Reasoning Mode</label>
+                <span class="key-status-pill" [class.active]="llmThinkingEnabled()" [class.empty]="!llmThinkingEnabled()">
+                  {{ llmThinkingEnabled() ? '✓ Enabled' : 'Disabled' }}
+                </span>
+              </div>
+              <label class="toggle-switch">
+                <input
+                  id="llm-reasoning"
+                  type="checkbox"
+                  [checked]="llmThinkingEnabled()"
+                  (change)="onLlmThinkingChange($event)"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="field-hint">
+                Streams chain-of-thought before the answer. Slower first token and the temperature setting is ignored while enabled.
+              </span>
+            </div>
+          }
+        }
 
         <!-- Temperature Slider -->
         <div class="form-group">
@@ -1558,37 +1610,39 @@
           </div>
         </div>
 
-        <!-- Anthropic API Key -->
-        <div class="form-group">
-          <div class="label-row">
-            <label for="anthropic-key" class="form-label">Anthropic API Key</label>
-            @if (hasAnthropicKey()) {
-              <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
-            } @else {
-              <span class="key-status-pill empty">No Key Configured</span>
-            }
+        <!-- Provider API Keys -->
+        @for (provider of apiKeyProviders(); track provider.id) {
+          <div class="form-group">
+            <div class="label-row">
+              <label [for]="'api-key-' + provider.id" class="form-label">{{ provider.label }} API Key</label>
+              @if (hasKey(provider.id)) {
+                <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
+              } @else {
+                <span class="key-status-pill empty">No Key Configured</span>
+              }
+            </div>
+            <div class="key-input-row">
+              <input
+                [id]="'api-key-' + provider.id"
+                [type]="isApiKeyVisible(provider.id) ? 'text' : 'password'"
+                class="form-input mono"
+                [placeholder]="provider.id === 'deepseek' ? 'sk-...' : 'sk-ant-api03-...'"
+                [value]="apiKeyValue(provider.id)"
+                (input)="onApiKeyChange(provider.id, $event)"
+              />
+              <button
+                type="button"
+                class="btn-secondary toggle-key-btn"
+                (click)="toggleApiKeyVisibility(provider.id)"
+              >
+                {{ isApiKeyVisible(provider.id) ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+            <span class="field-hint">
+              Never shared or stored unencrypted. Leave blank to retain currently saved key.
+            </span>
           </div>
-          <div class="key-input-row">
-            <input
-              id="anthropic-key"
-              [type]="showAnthropicKey() ? 'text' : 'password'"
-              class="form-input mono"
-              placeholder="sk-ant-api03-..."
-              [value]="anthropicKeyInput()"
-              (input)="onAnthropicKeyChange($event)"
-            />
-            <button
-              type="button"
-              class="btn-secondary toggle-key-btn"
-              (click)="showAnthropicKey.set(!showAnthropicKey())"
-            >
-              {{ showAnthropicKey() ? 'Hide' : 'Show' }}
-            </button>
-          </div>
-          <span class="field-hint">
-            Never shared or stored unencrypted. Leave blank to retain currently saved key.
-          </span>
-        </div>
+        }
       </section>
     }
 
@@ -1743,9 +1797,11 @@
           <div class="privacy-content">
             <h3>Third-Party API Disclosures</h3>
             <p>
-              When using Anthropic Claude for AI answer synthesis, prompt text is sent to Anthropic's API
-              via secure TLS. All Speech-to-Text transcription (NVIDIA Parakeet, Apple Speech) runs
-              100% on-device with zero audio or speech data leaving your computer.
+              When a cloud language model is selected (DeepSeek by default, or Anthropic Claude),
+              prompt text is sent to that provider's API via secure TLS. Selecting the Local
+              Streaming Generator keeps answer synthesis fully offline. All Speech-to-Text
+              transcription (NVIDIA Parakeet, Apple Speech) runs 100% on-device with zero audio
+              or speech data leaving your computer.
             </p>
           </div>
         </div>

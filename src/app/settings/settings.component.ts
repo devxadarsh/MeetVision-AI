@@ -21,7 +21,9 @@ import {
   ParakeetModelType,
   ParakeetStatus,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
 } from '@shared/ipc';
+import type { LlmProviderId } from '@shared/llm-provider-catalog';
 import {
   STT_MODEL_CATALOG,
   artifactTotalBytes,
@@ -86,6 +88,9 @@ function buildParakeetCards(platform: SttPlatform): ParakeetModelCard[] {
     };
   });
 }
+
+/** Sentinel option value that reveals the free-text model id input. */
+const CUSTOM_MODEL_VALUE = '__custom__';
 
 @Component({
   selector: 'app-settings',
@@ -174,10 +179,32 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly autoGainControl = signal<boolean>(true);
 
   // LLM Signals
-  readonly llmProvider = signal<'anthropic' | 'local'>('local');
-  readonly llmModel = signal('claude-3-5-sonnet-20241022');
+  readonly llmProviders = signal<LlmProviderInfo[]>([]);
+  readonly llmProvider = signal<LlmProviderId>('deepseek');
+  readonly llmModel = signal('deepseek-flash');
+  readonly llmThinkingEnabled = signal(false);
   readonly temperature = signal(0.3);
   readonly maxTokens = signal(500);
+
+  // Active LLM provider metadata + its model list (data-driven UI).
+  readonly activeLlmProvider = computed(() => {
+    const id = this.llmProvider();
+    return this.llmProviders().find((p) => p.id === id) ?? this.llmProviders()[0] ?? null;
+  });
+  readonly availableLlmModels = computed(() => this.activeLlmProvider()?.models ?? []);
+
+  // Custom model id entry (gateway providers such as OpenRouter).
+  readonly customModelValue = CUSTOM_MODEL_VALUE;
+  readonly customModelMode = signal(false);
+  readonly customLlmModel = signal('');
+  readonly selectLlmModel = computed(() => (this.customModelMode() ? CUSTOM_MODEL_VALUE : this.llmModel()));
+  readonly effectiveLlmModel = computed(() => {
+    const provider = this.activeLlmProvider();
+    if (this.customModelMode() && provider?.allowCustomModel) {
+      return this.customLlmModel().trim() || provider.defaultModel;
+    }
+    return this.llmModel();
+  });
 
   // Knowledge Base Signals (Milestone 7 / FR-44)
   readonly knowledgeDocs = signal<KnowledgeDoc[]>([]);
@@ -191,10 +218,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly isExportingSummary = signal(false);
   readonly latestSummary = signal<MeetingSummary | null>(null);
 
-  // API Key Form State
-  readonly anthropicKeyInput = signal('');
-  readonly hasAnthropicKey = signal(false);
-  readonly showAnthropicKey = signal(false);
+  // API Key Form State (per provider)
+  readonly apiKeyInputs = signal<Record<string, string>>({});
+  readonly hasApiKeys = signal<Partial<Record<LlmProviderId, boolean>>>({});
+  readonly showApiKeys = signal<Record<string, boolean>>({});
+  readonly apiKeyProviders = computed(() => this.llmProviders().filter((p) => p.requiresApiKey));
   readonly isEncryptionAvailable = signal(true);
   readonly isSaving = signal(false);
 
@@ -251,6 +279,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   });
 
   async ngOnInit(): Promise<void> {
+    await this.loadLlmProviders();
     await this.loadSettings();
     await this.loadSttEngines();
     await this.refreshParakeetStatus();
@@ -327,13 +356,24 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (typeof settings.autoGainControl === 'boolean') this.autoGainControl.set(settings.autoGainControl);
 
     // LLM Configuration
-    this.llmProvider.set(settings.llmProvider || 'local');
-    this.llmModel.set(settings.llmModel || 'claude-3-5-sonnet-20241022');
+    const providerId = settings.llmProvider || 'deepseek';
+    const storedModel = settings.llmModel || 'deepseek-flash';
+    this.llmProvider.set(providerId);
+    this.llmModel.set(storedModel);
+    const providerEntry = this.llmProviders().find((p) => p.id === providerId);
+    if (providerEntry?.allowCustomModel && !providerEntry.models.some((m) => m.id === storedModel)) {
+      this.customModelMode.set(true);
+      this.customLlmModel.set(storedModel);
+    } else {
+      this.customModelMode.set(false);
+      this.customLlmModel.set('');
+    }
+    this.llmThinkingEnabled.set(Boolean(settings.llmThinkingEnabled));
     this.temperature.set(typeof settings.temperature === 'number' ? settings.temperature : 0.3);
     this.maxTokens.set(settings.maxTokens || 500);
 
     // Key Statuses
-    this.hasAnthropicKey.set(Boolean(settings.hasAnthropicKey));
+    this.hasApiKeys.set(settings.hasApiKeys ?? {});
     this.isEncryptionAvailable.set(settings.isEncryptionAvailable !== false);
 
     // Overlay Dimensions & Transparency & Layout Mode
@@ -352,6 +392,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.sttEngines.set(engines);
     } catch (err) {
       console.warn('[SettingsComponent] Failed to load STT engines:', err);
+    }
+  }
+
+  async loadLlmProviders(): Promise<void> {
+    try {
+      const providers = await this.ipcService.getLlmProviders();
+      this.llmProviders.set(providers);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to load LLM providers:', err);
     }
   }
 
@@ -610,12 +659,32 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   onLlmProviderChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
-    this.llmProvider.set(target.value as 'anthropic' | 'local');
+    const id = target.value as LlmProviderId;
+    this.llmProvider.set(id);
+    const entry = this.llmProviders().find((p) => p.id === id);
+    if (entry) {
+      this.llmModel.set(entry.defaultModel);
+    }
+    this.customModelMode.set(false);
+    this.customLlmModel.set('');
   }
 
   onLlmModelChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
+    if (target.value === CUSTOM_MODEL_VALUE) {
+      this.customModelMode.set(true);
+      return;
+    }
+    this.customModelMode.set(false);
     this.llmModel.set(target.value);
+  }
+
+  onCustomLlmModelChange(event: Event): void {
+    this.customLlmModel.set((event.target as HTMLInputElement).value);
+  }
+
+  onLlmThinkingChange(event: Event): void {
+    this.llmThinkingEnabled.set((event.target as HTMLInputElement).checked);
   }
 
   onTemperatureChange(event: Event): void {
@@ -628,9 +697,25 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.maxTokens.set(parseInt(target.value, 10) || 500);
   }
 
-  onAnthropicKeyChange(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    this.anthropicKeyInput.set(target.value);
+  onApiKeyChange(providerId: LlmProviderId, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.apiKeyInputs.update((inputs) => ({ ...inputs, [providerId]: value }));
+  }
+
+  toggleApiKeyVisibility(providerId: LlmProviderId): void {
+    this.showApiKeys.update((state) => ({ ...state, [providerId]: !state[providerId] }));
+  }
+
+  hasKey(providerId: LlmProviderId): boolean {
+    return Boolean(this.hasApiKeys()[providerId]);
+  }
+
+  apiKeyValue(providerId: LlmProviderId): string {
+    return this.apiKeyInputs()[providerId] ?? '';
+  }
+
+  isApiKeyVisible(providerId: LlmProviderId): boolean {
+    return Boolean(this.showApiKeys()[providerId]);
   }
 
   onOverlayWidthChange(event: Event): void {
@@ -726,7 +811,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
       meetingAudioDeviceId: this.meetingAudioDeviceId() || undefined,
       micAudioDeviceId: this.micAudioDeviceId() || undefined,
       llmProvider: this.llmProvider(),
-      llmModel: this.llmModel(),
+      llmModel: this.effectiveLlmModel(),
+      llmThinkingEnabled: this.llmThinkingEnabled(),
       temperature: this.temperature(),
       maxTokens: this.maxTokens(),
       overlayWidth: this.overlayWidth(),
@@ -750,14 +836,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
     };
 
-    if (this.anthropicKeyInput().trim().length > 0) {
-      payload.anthropicApiKey = this.anthropicKeyInput().trim();
+    const apiKeys: Record<string, string> = {};
+    for (const [providerId, value] of Object.entries(this.apiKeyInputs())) {
+      if (value.trim().length > 0) {
+        apiKeys[providerId] = value.trim();
+      }
+    }
+    if (Object.keys(apiKeys).length > 0) {
+      payload.apiKeys = apiKeys;
     }
 
     try {
       const updated = await this.ipcService.setSettings(payload);
-      this.hasAnthropicKey.set(Boolean(updated.hasAnthropicKey));
-      this.anthropicKeyInput.set('');
+      this.hasApiKeys.set(updated.hasApiKeys ?? {});
+      this.apiKeyInputs.set({});
       this.showToast('Settings, audio routing, and context profile saved successfully!', 'success');
     } catch {
       this.showToast('Failed to save settings.', 'info');
@@ -785,8 +877,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.noiseSuppression.set(true);
     this.echoCancellation.set(true);
     this.autoGainControl.set(true);
-    this.llmProvider.set('local');
-    this.llmModel.set('claude-3-5-sonnet-20241022');
+    this.llmProvider.set('deepseek');
+    this.llmModel.set('deepseek-flash');
+    this.customModelMode.set(false);
+    this.customLlmModel.set('');
+    this.llmThinkingEnabled.set(false);
     this.temperature.set(0.3);
     this.maxTokens.set(500);
     this.overlayWidth.set(380);

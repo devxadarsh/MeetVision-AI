@@ -15,6 +15,7 @@ import {
   ParakeetStatus,
   ParakeetModelType,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
 } from '@shared/ipc';
 
 const api: ElectronAPI = {
@@ -179,6 +180,10 @@ const api: ElectronAPI = {
   // Pluggable STT Engines
   getSttEngines: (): Promise<STTEngineInfo[]> => {
     return ipcRenderer.invoke(IPC_CHANNELS.STT_ENGINES_GET);
+  },
+  // Pluggable LLM Providers
+  getLlmProviders: (): Promise<LlmProviderInfo[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDERS_GET);
   },
   // macOS Permissions
   getMacosPermissions: (): Promise<MacosPermissions> => {

@@ -119,6 +119,14 @@ const WARMUP_TIMEOUT_MS = 180000;
 const MIN_INFERENCE_SAMPLES = Math.round(16000 * 0.35);
 /** Utterances shorter than this are transient blips, not speech. */
 const MIN_USEFUL_SAMPLES = Math.round(16000 * 0.3);
+/**
+ * How often to re-decode the in-progress utterance so the transcript updates
+ * live while the speaker is still talking. Skipped entirely while an inference
+ * is already running, so the effective cadence tracks model speed.
+ */
+const INTERIM_DECODE_INTERVAL_MS = 700;
+/** Do not start an interim decode until at least this much new speech accumulated. */
+const INTERIM_MIN_SAMPLES = Math.round(16000 * 0.6);
 
 export class ParakeetEngine implements ISTTEngine {
   readonly id: STTEngineType = 'parakeet';
@@ -159,6 +167,8 @@ export class ParakeetEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -169,6 +179,8 @@ export class ParakeetEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -888,8 +900,18 @@ export class ParakeetEngine implements ISTTEngine {
       clearTimeout(this.utteranceTrackers.mic.silenceTimer);
       this.utteranceTrackers.mic.silenceTimer = null;
     }
+    if (this.utteranceTrackers.system.interimTimer) {
+      clearInterval(this.utteranceTrackers.system.interimTimer);
+      this.utteranceTrackers.system.interimTimer = null;
+    }
+    if (this.utteranceTrackers.mic.interimTimer) {
+      clearInterval(this.utteranceTrackers.mic.interimTimer);
+      this.utteranceTrackers.mic.interimTimer = null;
+    }
     this.utteranceTrackers.system.isSpeaking = false;
     this.utteranceTrackers.mic.isSpeaking = false;
+    this.utteranceTrackers.system.lastInterimSamples = 0;
+    this.utteranceTrackers.mic.lastInterimSamples = 0;
   }
 
   feedAudio(frame: AudioFrame): void {
@@ -956,6 +978,15 @@ export class ParakeetEngine implements ISTTEngine {
         }, 3000);
       }
 
+      // Re-decode the growing utterance periodically so the transcript streams
+      // while the speaker is still talking (instead of only after a pause).
+      if (tracker.isSpeaking && !tracker.interimTimer) {
+        tracker.interimTimer = setInterval(
+          () => this.runInterimDecode(tracker, speaker),
+          INTERIM_DECODE_INTERVAL_MS
+        );
+      }
+
       // Only flush if continuous uninterrupted speech runs for 15s without any natural pause
       if (tracker.isSpeaking && tracker.totalSamples >= 16000 * 15.0) {
         const chunksToProcess = [...tracker.chunks];
@@ -990,12 +1021,43 @@ export class ParakeetEngine implements ISTTEngine {
     }
   }
 
+  /**
+   * Periodically transcribes the in-progress utterance and emits it as a
+   * non-final segment so the transcript updates while the speaker talks. Skips
+   * while another inference runs, keeping CPU/ANE load bounded.
+   */
+  private runInterimDecode(
+    tracker: typeof this.utteranceTrackers.mic,
+    speaker: string
+  ): void {
+    if (!this.active || !tracker.isSpeaking || tracker.isBusy) return;
+    if (tracker.chunks.length === 0 || tracker.totalSamples < INTERIM_MIN_SAMPLES) return;
+    // Require some new audio since the previous interim decode.
+    if (tracker.totalSamples - tracker.lastInterimSamples < Math.round(INTERIM_MIN_SAMPLES * 0.5)) {
+      return;
+    }
+    tracker.lastInterimSamples = tracker.totalSamples;
+    tracker.lastInterimMs = Date.now();
+    this.transcribeAudio(
+      [...tracker.chunks],
+      tracker.totalSamples,
+      tracker.segmentId,
+      tracker.speechStartMs,
+      speaker,
+      false
+    );
+  }
+
   private finalizeUtterance(tracker: typeof this.utteranceTrackers.mic, speaker: string): void {
     if (!this.active) return;
 
     if (tracker.silenceTimer) {
       clearTimeout(tracker.silenceTimer);
       tracker.silenceTimer = null;
+    }
+    if (tracker.interimTimer) {
+      clearInterval(tracker.interimTimer);
+      tracker.interimTimer = null;
     }
 
     const chunksToProcess = tracker.chunks;
@@ -1008,6 +1070,7 @@ export class ParakeetEngine implements ISTTEngine {
     tracker.isSpeaking = false;
     tracker.chunks = [];
     tracker.totalSamples = 0;
+    tracker.lastInterimSamples = 0;
     tracker.lastInterimMs = 0;
 
     // Skip brief transients that never sustained speech. Real short words are
@@ -1112,16 +1175,19 @@ export class ParakeetEngine implements ISTTEngine {
       .then((text) => {
         if (tracker) tracker.isBusy = false;
         const cleanText = (text || '').trim();
-        if (cleanText.length > 0) {
-          this.onSegmentCallback?.({
-            id: segmentId,
-            text: cleanText,
-            isFinal,
-            startMs,
-            endMs: Date.now(),
-            speaker,
-          });
+        if (cleanText.length === 0) return;
+        // Drop a late interim whose utterance was already finalized or reset.
+        if (!isFinal && (!this.active || !tracker?.isSpeaking || tracker.segmentId !== segmentId)) {
+          return;
         }
+        this.onSegmentCallback?.({
+          id: segmentId,
+          text: cleanText,
+          isFinal,
+          startMs,
+          endMs: Date.now(),
+          speaker,
+        });
       })
       .catch((error) => {
         if (tracker) tracker.isBusy = false;

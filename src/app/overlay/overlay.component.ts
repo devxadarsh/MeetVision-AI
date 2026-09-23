@@ -83,6 +83,33 @@ const SAMPLE_QUESTION_TEMPLATES: DummyQuestionTemplate[] = [
   },
 ];
 
+/**
+ * Returns the portion of the live interim transcript not already present in the
+ * finalized row text, using word-aligned overlap detection. Lets a single row
+ * grow (finalized text + live tail + cursor) instead of showing a second row.
+ */
+function liveInterimTail(finalText: string, interimText: string): string {
+  const base = (finalText || '').trim();
+  const interim = (interimText || '').trim();
+  if (!interim) return '';
+  if (!base) return interim;
+  if (base.toLowerCase().endsWith(interim.toLowerCase())) return '';
+
+  const baseWords = base.split(/\s+/);
+  const interimWords = interim.split(/\s+/);
+  const maxOverlap = Math.min(baseWords.length, interimWords.length);
+  for (let n = maxOverlap; n > 0; n--) {
+    const baseSuffix = baseWords.slice(baseWords.length - n).join(' ').toLowerCase();
+    const interimPrefix = interimWords.slice(0, n).join(' ').toLowerCase();
+    if (baseSuffix === interimPrefix) {
+      return interimWords.slice(n).join(' ');
+    }
+  }
+
+  if (base.toLowerCase().includes(interim.toLowerCase())) return '';
+  return interim;
+}
+
 @Component({
   selector: 'app-overlay',
   standalone: true,
@@ -129,6 +156,12 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly activeLiveText = signal<string>('');
   readonly activeLiveSpeaker = signal<string>('');
   readonly isSpeaking = signal<boolean>(false);
+  /**
+   * Fresh, not-yet-final row. Created automatically after Give Answer (and on
+   * the first speech of a session) and filled by the next utterance. Rendered
+   * like a normal row but with a disabled Give Answer button until it finalizes.
+   */
+  readonly draftRow = signal<TranscriptSegment | null>(null);
 
   // Custom Tooltip State (Smart non-clipping placement)
   readonly tooltipText = signal<string | null>(null);
@@ -175,8 +208,40 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return interim;
   });
 
-  readonly displayedLiveText = computed(() => {
-    if (this.transcriptionMode() === 'other-only' && this.activeLiveSpeaker() === 'You') {
+  /** Id of the final row still accumulating speech, so it can host the live cursor. */
+  readonly activeTranscriptRowId = computed(() => {
+    // A pending draft row owns the live text; the previous row stops accumulating.
+    if (this.draftRow()) return null;
+    const segs = this.displayedTranscriptSegments();
+    const last = segs[segs.length - 1];
+    if (!last) return null;
+    if (this.answeredSegmentIds().has(last.id) || this.answeringSegmentIds().has(last.id)) {
+      return null;
+    }
+    return last.id;
+  });
+
+  /** Live-typing tail appended inline to the active final row. */
+  readonly inlineInterimTail = computed(() => {
+    const interim = this.displayedInterim();
+    if (!interim) return '';
+    const segs = this.displayedTranscriptSegments();
+    const last = segs[segs.length - 1];
+    if (!last || last.id !== this.activeTranscriptRowId()) return '';
+    return liveInterimTail(last.text, interim.text);
+  });
+
+  /** The draft row, unless the current mode filters out its speaker. */
+  readonly displayedDraftRow = computed(() => {
+    const draft = this.draftRow();
+    if (!draft) return null;
+    if (this.transcriptionMode() === 'other-only' && draft.speaker === 'You') {
+      return null;
+    }
+    return draft;
+  });
+
+  readonly displayedLiveText = computed(() => {    if (this.transcriptionMode() === 'other-only' && this.activeLiveSpeaker() === 'You') {
       return '';
     }
     return this.activeLiveText();
@@ -438,6 +503,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
           const text = segment.text ? segment.text.trim() : '';
           if (!text) return;
 
+          const draft = this.draftRow();
+
           this.transcriptSegments.update((prev) => {
             // Deduplicate exact repeat by segment ID
             if (prev.some((s) => s.id === segment.id)) {
@@ -450,8 +517,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
               last &&
               (this.answeredSegmentIds().has(last.id) || this.answeringSegmentIds().has(last.id));
 
-            // If there is an active unanswered latest row: append text to that same row!
-            if (last && !isLastAnswered) {
+            // Append to the active row unless a new draft row has been requested.
+            if (last && !isLastAnswered && !draft) {
               if (last.text.toLowerCase().endsWith(text.toLowerCase()) || last.text.includes(text)) {
                 return prev;
               }
@@ -478,17 +545,47 @@ export class OverlayComponent implements OnInit, OnDestroy {
               return [...prev.slice(0, -1), updatedLast];
             }
 
-            // Otherwise, start a brand new row (first row or previous row was answered)
-            const next = [...prev, { ...segment, text }];
+            // Otherwise start a brand new row. If a draft row was showing, keep
+            // its id/start time so the live row seamlessly becomes the final row.
+            const next = [
+              ...prev,
+              {
+                ...segment,
+                id: draft?.id ?? segment.id,
+                startMs: draft?.startMs ?? segment.startMs,
+                text,
+              },
+            ];
             return next.length > 500 ? next.slice(-500) : next;
           });
+
+          this.draftRow.set(null);
         } else {
           const raw = segment.text ? segment.text.trim() : '';
-          if (raw && raw !== '...') {
-            this.activeInterim.set(segment);
-            this.activeLiveText.set(raw);
-            this.activeLiveSpeaker.set(segment.speaker || '');
-            this.isSpeaking.set(true);
+          // Engine placeholder text ('Listening...', '...') carries no decoded
+          // words; keep the speaker so the live cursor renders on the active row.
+          const isEmpty = !raw || raw === '...' || raw === 'Listening...';
+          this.activeInterim.set({ ...segment, text: isEmpty ? '' : raw });
+          this.activeLiveText.set(isEmpty ? '' : raw);
+          this.activeLiveSpeaker.set(segment.speaker || this.activeLiveSpeaker());
+          this.isSpeaking.set(true);
+
+          // With an active accumulating row the interim merges inline; otherwise
+          // it fills the draft row (created after Give Answer, or on first speech).
+          if (this.activeTranscriptRowId() === null) {
+            if (this.transcriptionMode() !== 'other-only' || segment.speaker !== 'You') {
+              const base = this.draftRow();
+              this.draftRow.set({
+                id: base && base.text.trim().length > 0 ? base.id : segment.id,
+                text: isEmpty ? base?.text ?? '' : raw,
+                isFinal: false,
+                startMs: base?.startMs ?? segment.startMs,
+                endMs: segment.endMs || Date.now(),
+                speaker: segment.speaker || base?.speaker,
+              });
+            }
+          } else if (this.draftRow()) {
+            this.draftRow.set(null);
           }
         }
         this.scrollToBottom();
@@ -498,6 +595,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
     // Active Meeting Session Reset
     this.unsubscribeTranscriptClear = this.ipcService.onTranscriptClear(() => {
       this.transcriptSegments.set([]);
+      this.draftRow.set(null);
       this.activeInterim.set(null);
       this.activeLiveText.set('');
       this.activeLiveSpeaker.set('');
@@ -538,18 +636,55 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   private handleNewQuestion(question: Question): void {
-    // Add new question to top of feed with 50-item bounding
+    const existing = this.questions().some((q) => q.id === question.id);
+
+    if (existing) {
+      // The same question is re-announced when answer generation starts (after
+      // detection). Update it in place: duplicate ids would break the
+      // `@for (... track q.id)` rendering and hide the streamed answer.
+      this.questions.update((list) =>
+        list.map((q) => {
+          if (q.id !== question.id) return q;
+          const status: Question['status'] = q.status === 'pinned' ? 'pinned' : question.status;
+          const needsAnswer = status === 'answering' || status === 'answered';
+          return {
+            ...q,
+            ...question,
+            status,
+            answer:
+              q.answer ??
+              (needsAnswer
+                ? {
+                    questionId: q.id,
+                    mode: this.selectedMode().toLowerCase() as 'short' | 'detailed' | 'simple',
+                    bullets: [],
+                    createdAt: Date.now(),
+                  }
+                : undefined),
+          };
+        })
+      );
+
+      // Keep current tab stable so transcript rows remain visible and uninterrupted
+      return;
+    }
+
+    // New question: prepend to the feed with 50-item bounding. Preserve the
+    // status the main process sent ('unanswered' on detection, 'answering' when
+    // generation has already started).
     this.questions.update((prev) => {
       const updated = [
         {
           ...question,
-          status: 'answering' as const,
-          answer: {
-            questionId: question.id,
-            mode: this.selectedMode().toLowerCase() as 'short' | 'detailed' | 'simple',
-            bullets: [],
-            createdAt: Date.now(),
-          },
+          answer:
+            question.status === 'answering'
+              ? {
+                  questionId: question.id,
+                  mode: this.selectedMode().toLowerCase() as 'short' | 'detailed' | 'simple',
+                  bullets: [],
+                  createdAt: Date.now(),
+                }
+              : undefined,
         },
         ...prev,
       ];
@@ -691,6 +826,51 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** Opens a fresh row for the next utterance without closing the current one. */
+  startNewRowFrom(seg: TranscriptSegment): void {
+    this.startDraftRow(seg.speaker);
+    this.showToast('New transcript row ready');
+  }
+
+  /** Clears a row's text. If it is the active row, it resets to a fresh live row. */
+  clearRowText(seg: TranscriptSegment): void {
+    this.rawBufferMap.delete(seg.id);
+    const list = this.transcriptSegments();
+    const isLast = list.length > 0 && list[list.length - 1].id === seg.id;
+    const closable =
+      isLast && !this.answeredSegmentIds().has(seg.id) && !this.answeringSegmentIds().has(seg.id);
+
+    if (closable) {
+      // Keep the row visible as an empty live row so the next speech fills it.
+      this.transcriptSegments.update((items) => items.filter((s) => s.id !== seg.id));
+      this.draftRow.set({
+        id: seg.id,
+        text: '',
+        isFinal: false,
+        startMs: seg.startMs,
+        endMs: Date.now(),
+        speaker: seg.speaker,
+      });
+    } else {
+      this.transcriptSegments.update((items) =>
+        items.map((s) => (s.id === seg.id ? { ...s, text: '' } : s))
+      );
+    }
+    this.showToast('Row cleared');
+  }
+
+  /** Opens a fresh, empty draft row to receive the next utterance. */
+  private startDraftRow(speaker?: string): void {
+    this.draftRow.set({
+      id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: '',
+      isFinal: false,
+      startMs: Date.now(),
+      endMs: Date.now(),
+      speaker: speaker || this.activeLiveSpeaker() || undefined,
+    });
+  }
+
   async giveAnswerForSegment(segment: TranscriptSegment): Promise<void> {
     if (!segment.text || !segment.text.trim()) return;
 
@@ -711,6 +891,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
     this.answeringSegmentIds.update((set) => new Set(set).add(segment.id));
     this.showToast('Synthesizing answer talking points...');
+
+    // Immediately open a fresh row for the next utterance. Its Give Answer
+    // button stays disabled until the row fills with final text.
+    this.startDraftRow(segment.speaker);
 
     if (this.isElectron()) {
       await this.ipcService.answerQuestion({
@@ -849,6 +1033,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
   async clearTranscript(): Promise<void> {
     this.transcriptSegments.set([]);
+    this.draftRow.set(null);
     this.activeInterim.set(null);
     if (this.isElectron()) {
       await this.ipcService.clearTranscript();
@@ -1003,12 +1188,15 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   formatSegmentTime(startMs: number): string {
-    const totalSecs = Math.floor(startMs / 1000);
-    const mins = Math.floor(totalSecs / 60)
+    const totalSecs = Math.max(0, Math.floor(startMs / 1000));
+    const hours = Math.floor(totalSecs / 3600)
+      .toString()
+      .padStart(2, '0');
+    const mins = Math.floor((totalSecs % 3600) / 60)
       .toString()
       .padStart(2, '0');
     const secs = (totalSecs % 60).toString().padStart(2, '0');
-    return `${mins}:${secs}`;
+    return `${hours}:${mins}:${secs}`;
   }
 
   // Post-Meeting Summary & Action Items (Milestone 7 / FR-52)

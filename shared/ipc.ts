@@ -1,3 +1,5 @@
+import type { LlmProviderCatalogEntry, LlmProviderId } from './llm-provider-catalog';
+
 export type QuestionStatus = 'new' | 'unanswered' | 'answering' | 'answered' | 'pinned' | 'dismissed';
 
 export interface Question {
@@ -161,15 +163,18 @@ export interface AppSettings {
   parakeetModel?: ParakeetModelType;
   meetingAudioDeviceId?: string;
   micAudioDeviceId?: string;
-  llmProvider: 'anthropic' | 'local';
+  llmProvider: LlmProviderId;
   llmModel: string;
+  llmThinkingEnabled?: boolean;
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
-  // Key flags returned to UI (keys themselves are encrypted via safeStorage in main process)
+  // Per-provider key presence map returned to UI (keys themselves are encrypted via safeStorage in main process)
+  hasApiKeys?: Partial<Record<LlmProviderId, boolean>>;
+  /** @deprecated retained for backward compatibility; use hasApiKeys. */
   hasAnthropicKey?: boolean;
-  // Form input field when user updates their key
-  anthropicApiKey?: string;
+  // Write-only form inputs when the user updates a key, keyed by provider id
+  apiKeys?: Record<string, string>;
   isEncryptionAvailable?: boolean;
   // First-run privacy & legal consent (PRD Section 11 / Milestone 6)
   hasAcceptedConsent?: boolean;
@@ -194,6 +199,8 @@ export interface AppSettings {
   echoCancellation?: boolean;
   autoGainControl?: boolean;
 }
+
+export type LlmProviderInfo = LlmProviderCatalogEntry;
 
 export interface AppDiagnostics {
   platform: string;
@@ -276,6 +283,7 @@ export const IPC_CHANNELS = {
   MACOS_PERMISSIONS_GET: 'macos:permissions-get',
   MACOS_PERMISSION_REQUEST: 'macos:permission-request',
   STT_ENGINES_GET: 'stt:engines-get',
+  LLM_PROVIDERS_GET: 'llm:providers-get',
 } as const;
 
 export interface ElectronAPI {
@@ -318,6 +326,8 @@ export interface ElectronAPI {
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void) => () => void;
   // Pluggable STT Engines
   getSttEngines: () => Promise<STTEngineInfo[]>;
+  // Pluggable LLM Providers
+  getLlmProviders: () => Promise<LlmProviderInfo[]>;
   // macOS Permissions
   getMacosPermissions: () => Promise<MacosPermissions>;
   requestMacosMicrophonePermission: () => Promise<boolean>;

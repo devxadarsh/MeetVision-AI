@@ -16,6 +16,7 @@ import {
   ParakeetStatus,
   ParakeetModelType,
 } from '@shared/ipc';
+import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 import { SttService } from './services/stt.service';
 import { QuestionDetector } from './services/detector.service';
 import { LlmService } from './services/llm.service';
@@ -351,10 +352,12 @@ function generateAnswerForQuestion(question: Question, mode: 'short' | 'detailed
     {
       mode,
       profile: storeService.getContextProfile(),
-      apiKey: storeService.getDecryptedAnthropicKey(),
+      providerId: settings.llmProvider,
+      apiKey: storeService.getDecryptedApiKey(settings.llmProvider),
       model: settings.llmModel,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
+      thinkingEnabled: Boolean(settings.llmThinkingEnabled),
       knowledgeSnippets: relevantSnippets,
     },
     (chunk) => {
@@ -666,26 +669,10 @@ function registerIpcHandlers(): void {
     const updated = storeService.updateSettings(newSettings);
     await sttService.applySettings(updated);
 
-    const activeModel = sttService.getModelName();
-    const activeProvider = sttService.getProviderName();
-
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send(IPC_CHANNELS.SETTINGS_CHANGED, updated);
       }
-    }
-
-    // Broadcast a system segment in the live transcript stream so user sees the exact model switch
-    if (sttService.isActive()) {
-      const modelLabel = activeModel ? `${activeProvider} • ${activeModel}` : activeProvider;
-      handleTranscriptSegment({
-        id: `model-switch-${Date.now()}`,
-        speaker: 'System',
-        text: `[Active Speech-to-Text Model: ${modelLabel}]`,
-        startMs: 0,
-        endMs: 0,
-        isFinal: true,
-      });
     }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -887,6 +874,11 @@ function registerIpcHandlers(): void {
   // Pluggable STT Engines
   ipcMain.handle(IPC_CHANNELS.STT_ENGINES_GET, async () => {
     return sttService.getEngines();
+  });
+
+  // Pluggable LLM Providers
+  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDERS_GET, async () => {
+    return LLM_PROVIDERS.map((p) => ({ ...p }));
   });
 
   // macOS Permissions

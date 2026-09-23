@@ -33,6 +33,14 @@ function encodeWav(samples: Int16Array, sampleRate = 16000): Buffer {
   return buffer;
 }
 
+/**
+ * How often to re-decode the in-progress utterance so the transcript updates
+ * live while the speaker is still talking. Skipped while an inference runs.
+ */
+const INTERIM_DECODE_INTERVAL_MS = 700;
+/** Minimum speech before the first interim decode is attempted. */
+const INTERIM_MIN_SAMPLES = Math.round(16000 * 0.6);
+
 export class AppleSpeechEngine implements ISTTEngine {
   readonly id: STTEngineType = 'apple-speech';
   readonly name = 'Apple Speech (Native macOS Dictation & Apple Neural Engine)';
@@ -54,6 +62,8 @@ export class AppleSpeechEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -64,6 +74,8 @@ export class AppleSpeechEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -144,8 +156,18 @@ export class AppleSpeechEngine implements ISTTEngine {
       clearTimeout(this.utteranceTrackers.mic.silenceTimer);
       this.utteranceTrackers.mic.silenceTimer = null;
     }
+    if (this.utteranceTrackers.system.interimTimer) {
+      clearInterval(this.utteranceTrackers.system.interimTimer);
+      this.utteranceTrackers.system.interimTimer = null;
+    }
+    if (this.utteranceTrackers.mic.interimTimer) {
+      clearInterval(this.utteranceTrackers.mic.interimTimer);
+      this.utteranceTrackers.mic.interimTimer = null;
+    }
     this.utteranceTrackers.system.isSpeaking = false;
     this.utteranceTrackers.mic.isSpeaking = false;
+    this.utteranceTrackers.system.lastInterimSamples = 0;
+    this.utteranceTrackers.mic.lastInterimSamples = 0;
   }
 
   feedAudio(frame: AudioFrame): void {
@@ -212,6 +234,15 @@ export class AppleSpeechEngine implements ISTTEngine {
         }, 2000);
       }
 
+      // Re-decode the growing utterance periodically so the transcript streams
+      // while the speaker is still talking (instead of only after a pause).
+      if (tracker.isSpeaking && !tracker.interimTimer) {
+        tracker.interimTimer = setInterval(
+          () => this.runInterimDecode(tracker, speaker),
+          INTERIM_DECODE_INTERVAL_MS
+        );
+      }
+
       // Only flush if continuous uninterrupted speech runs for 15s without any natural pause
       if (tracker.isSpeaking && tracker.totalSamples >= 16000 * 15.0) {
         const chunksToProcess = [...tracker.chunks];
@@ -246,12 +277,41 @@ export class AppleSpeechEngine implements ISTTEngine {
     }
   }
 
+  /**
+   * Periodically transcribes the in-progress utterance as a non-final segment
+   * so the transcript updates while the speaker talks.
+   */
+  private runInterimDecode(
+    tracker: typeof this.utteranceTrackers.mic,
+    speaker: string
+  ): void {
+    if (!this.active || !tracker.isSpeaking || tracker.isBusy) return;
+    if (tracker.chunks.length === 0 || tracker.totalSamples < INTERIM_MIN_SAMPLES) return;
+    if (tracker.totalSamples - tracker.lastInterimSamples < Math.round(INTERIM_MIN_SAMPLES * 0.5)) {
+      return;
+    }
+    tracker.lastInterimSamples = tracker.totalSamples;
+    tracker.lastInterimMs = Date.now();
+    this.transcribeAudio(
+      [...tracker.chunks],
+      tracker.totalSamples,
+      tracker.segmentId,
+      tracker.speechStartMs,
+      speaker,
+      false
+    );
+  }
+
   private finalizeUtterance(tracker: typeof this.utteranceTrackers.mic, speaker: string): void {
     if (!this.active) return;
 
     if (tracker.silenceTimer) {
       clearTimeout(tracker.silenceTimer);
       tracker.silenceTimer = null;
+    }
+    if (tracker.interimTimer) {
+      clearInterval(tracker.interimTimer);
+      tracker.interimTimer = null;
     }
 
     const chunksToProcess = tracker.chunks;
@@ -264,6 +324,7 @@ export class AppleSpeechEngine implements ISTTEngine {
     tracker.isSpeaking = false;
     tracker.chunks = [];
     tracker.totalSamples = 0;
+    tracker.lastInterimSamples = 0;
     tracker.lastInterimMs = 0;
 
     // Only skip if total audio was a brief transient click (<300ms) and never sustained speech
@@ -333,16 +394,19 @@ export class AppleSpeechEngine implements ISTTEngine {
         const cleanText = textLines.join(' ').trim();
 
         // Emit decoded live interim or finalized speech text
-        if (cleanText && cleanText.length > 0) {
-          this.onSegmentCallback?.({
-            id: segmentId,
-            text: cleanText,
-            isFinal,
-            startMs,
-            endMs: Date.now(),
-            speaker,
-          });
+        if (cleanText.length === 0) return;
+        // Drop a late interim whose utterance was already finalized or reset.
+        if (!isFinal && (!this.active || !tracker?.isSpeaking || tracker.segmentId !== segmentId)) {
+          return;
         }
+        this.onSegmentCallback?.({
+          id: segmentId,
+          text: cleanText,
+          isFinal,
+          startMs,
+          endMs: Date.now(),
+          speaker,
+        });
       }
     );
   }

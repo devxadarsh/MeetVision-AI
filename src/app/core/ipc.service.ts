@@ -17,7 +17,9 @@ import {
   ParakeetStatus,
   ParakeetModelType,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
 } from '@shared/ipc';
+import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 
 @Injectable({
   providedIn: 'root',
@@ -30,11 +32,13 @@ export class IpcService {
   private mockSettings: AppSettings = {
     sttProvider: 'parakeet',
     parakeetModel: 'parakeet-flash',
-    llmProvider: 'local',
-    llmModel: 'claude-3-5-sonnet-20241022',
+    llmProvider: 'deepseek',
+    llmModel: 'deepseek-flash',
+    llmThinkingEnabled: false,
     temperature: 0.3,
     maxTokens: 500,
     overlayOpacity: 0.88,
+    hasApiKeys: { deepseek: false, openrouter: false, anthropic: false, local: true },
     hasAnthropicKey: false,
     isEncryptionAvailable: false,
     profile: {
@@ -296,6 +300,14 @@ export class IpcService {
       ];
     }
     return this.api.getSttEngines();
+  }
+
+  // Pluggable LLM Providers
+  async getLlmProviders(): Promise<LlmProviderInfo[]> {
+    if (!this.api) {
+      return LLM_PROVIDERS.map((p) => ({ ...p }));
+    }
+    return this.api.getLlmProviders();
   }
 
   // macOS Permissions
