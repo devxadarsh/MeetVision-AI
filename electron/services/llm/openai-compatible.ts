@@ -21,11 +21,12 @@ export interface OpenAiCompatibleChatOptions {
 export async function streamOpenAiCompatibleChat(
   options: OpenAiCompatibleChatOptions,
   onDelta: (text: string) => void
-): Promise<{ finishReason?: string }> {
+): Promise<{ finishReason?: string; totalTokens?: number; inputTokens?: number; outputTokens?: number }> {
   const body: Record<string, unknown> = {
     model: options.model,
     max_tokens: options.maxTokens,
     stream: true,
+    stream_options: { include_usage: true },
     messages: [
       { role: 'system', content: options.systemPrompt },
       { role: 'user', content: options.userPrompt },
@@ -58,6 +59,10 @@ export async function streamOpenAiCompatibleChat(
   const decoder = new TextDecoder();
   let buffer = '';
   let finishReason: string | undefined;
+  let totalTokens: number | undefined;
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let streamedChars = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -74,6 +79,12 @@ export async function streamOpenAiCompatibleChat(
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
         const data = JSON.parse(dataStr);
+        if (data?.usage) {
+          if (typeof data.usage.prompt_tokens === 'number') inputTokens = data.usage.prompt_tokens;
+          if (typeof data.usage.completion_tokens === 'number') outputTokens = data.usage.completion_tokens;
+          if (typeof data.usage.total_tokens === 'number') totalTokens = data.usage.total_tokens;
+        }
+
         const choice = data?.choices?.[0];
         if (typeof choice?.finish_reason === 'string') {
           finishReason = choice.finish_reason;
@@ -81,6 +92,7 @@ export async function streamOpenAiCompatibleChat(
         // Never surface chain-of-thought as answer bullets.
         const text = choice?.delta?.content;
         if (typeof text === 'string' && text.length > 0) {
+          streamedChars += text.length;
           onDelta(text);
         }
       } catch {
@@ -89,5 +101,13 @@ export async function streamOpenAiCompatibleChat(
     }
   }
 
-  return { finishReason };
+  // Fallback token calculation if provider omitted usage in stream
+  if (totalTokens === undefined) {
+    const promptLen = (options.systemPrompt?.length || 0) + (options.userPrompt?.length || 0);
+    inputTokens = Math.max(1, Math.round(promptLen / 4));
+    outputTokens = Math.max(1, Math.round(streamedChars / 4));
+    totalTokens = inputTokens + outputTokens;
+  }
+
+  return { finishReason, totalTokens, inputTokens, outputTokens };
 }

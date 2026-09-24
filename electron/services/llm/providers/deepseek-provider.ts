@@ -39,6 +39,11 @@ export class DeepseekProvider implements ILlmProvider {
       onDelta
     );
 
-    return { finishReason: result.finishReason };
+    return {
+      finishReason: result.finishReason,
+      totalTokens: result.totalTokens,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+    };
   }
 }

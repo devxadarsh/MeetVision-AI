@@ -198,6 +198,24 @@
     }
   }
 
+  &.screenvision-chip {
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.35);
+    color: #38bdf8;
+
+    &:hover {
+      background: rgba(56, 189, 248, 0.22);
+      border-color: rgba(56, 189, 248, 0.6);
+      color: #7dd3fc;
+    }
+
+    &.active {
+      background: rgba(56, 189, 248, 0.3);
+      border-color: #38bdf8;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+    }
+  }
+
   &.session-reset-chip {
     background: rgba(239, 68, 68, 0.12);
     border-color: rgba(239, 68, 68, 0.3);
@@ -806,7 +824,7 @@
   code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
-    color: #67e8f9;
+    color: #e2e8f0;
     white-space: pre-wrap;
     word-break: break-all;
   }
@@ -1775,6 +1793,24 @@ kbd {
       font-weight: 600;
     }
 
+    &.screenvision-pill {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.35);
+      color: #38bdf8;
+
+      &:hover {
+        background: rgba(56, 189, 248, 0.22);
+        border-color: rgba(56, 189, 248, 0.6);
+        color: #7dd3fc;
+      }
+
+      &.active {
+        background: rgba(56, 189, 248, 0.3);
+        border-color: #38bdf8;
+        box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+      }
+    }
+
     &.session-pill {
       background: rgba(239, 68, 68, 0.12);
       border-color: rgba(239, 68, 68, 0.3);
@@ -2196,7 +2232,9 @@ kbd {
   code {
     font-family: 'SF Mono', Consolas, Monaco, monospace;
     font-size: 11px;
-    color: #38bdf8;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 }
 
@@ -2648,5 +2686,528 @@ kbd {
 @keyframes v2Spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   ScreenVision Tab View Styles (V1 & V2)
+   ========================================================================== */
+
+.screenvision-view,
+.v2-screenvision-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.screenvision-status-banner,
+.v2-sv-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.sv-status-left,
+.v2-sv-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sv-dot,
+.v2-sv-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 6px #38bdf8;
+
+  &.scanning {
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+    animation: v2Pulse 0.8s infinite ease-in-out;
+  }
+}
+
+.sv-model-label,
+.v2-sv-engine-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #7dd3fc;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.sv-scan-time {
+  font-size: 10px;
+  color: #64748b;
+  font-family: 'SF Mono', Consolas, monospace;
+  margin-left: 6px;
+}
+
+.sv-status-right,
+.v2-sv-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sv-word-badge,
+.v2-sv-stat-pill {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: #bae6fd;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.screenvision-content-scroll,
+.v2-sv-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.screenvision-text-card,
+.v2-sv-card {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.text-card-toolbar,
+.v2-sv-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+  .text-card-title,
+  .v2-sv-card-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    letter-spacing: 0.04em;
+    font-family: 'SF Mono', Consolas, monospace;
+  }
+}
+
+.sv-copy-btn,
+.v2-sv-action-btn {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: rgba(56, 189, 248, 0.28);
+    color: #fff;
+  }
+}
+
+.extracted-text-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.extracted-pre,
+.v2-sv-pre {
+  margin: 0;
+  font-family: 'SF Mono', Consolas, Monaco, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+/* ==========================================================================
+   Tokens Badge & Context Snapshot Styles (Req 1, 2, 3)
+   ========================================================================== */
+
+.token-stat-pill,
+.v2-token-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  cursor: default;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+
+  &:hover {
+    background: rgba(14, 165, 233, 0.22);
+    border-color: rgba(56, 189, 248, 0.6);
+  }
+
+  .tok-total,
+  .v2-tok-total {
+    font-size: 10px;
+    font-weight: 700;
+    color: #38bdf8;
+  }
+
+  .tok-detail,
+  .v2-tok-detail {
+    font-size: 9px;
+    font-weight: 500;
+    color: #94a3b8;
+  }
+}
+
+.token-badge,
+.v2-token-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.answer-token-indicator,
+.v2-answer-token-indicator {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.context-btn,
+.v2-context-btn {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #c084fc !important;
+  background: rgba(192, 132, 252, 0.12) !important;
+  border: 1px solid rgba(192, 132, 252, 0.3) !important;
+  padding: 2px 7px !important;
+  border-radius: 4px !important;
+  transition: all 0.15s ease !important;
+
+  &:hover,
+  &.active {
+    background: rgba(192, 132, 252, 0.28) !important;
+    color: #fff !important;
+    border-color: rgba(192, 132, 252, 0.6) !important;
+  }
+}
+
+/* Expanded Source Context Snapshot Drawer */
+.context-snapshot-card,
+.v2-context-snapshot-card {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(192, 132, 252, 0.35);
+  border-radius: 7px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: contextFadeIn 0.15s ease-out;
+
+  .context-snapshot-header,
+  .v2-context-snapshot-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 4px;
+
+    .context-snapshot-title,
+    .v2-context-title {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #e9d5ff;
+      letter-spacing: 0.02em;
+    }
+
+    .context-close-btn,
+    .v2-context-close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 0 4px;
+
+      &:hover {
+        color: #fff;
+      }
+    }
+  }
+
+  .context-snapshot-body,
+  .v2-context-snapshot-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .context-block,
+  .v2-context-block {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 5px;
+    padding: 6px 8px;
+
+    &.block-other {
+      border-left: 3px solid #38bdf8;
+    }
+
+    &.block-you {
+      border-left: 3px solid #c084fc;
+    }
+
+    &.block-ocr {
+      border-left: 3px solid #f59e0b;
+    }
+
+    .context-block-label,
+    .v2-context-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .context-block-text,
+    .v2-context-text {
+      margin: 0;
+      font-size: 11px;
+      color: #f1f5f9;
+      line-height: 1.35;
+    }
+
+    .context-block-ocr,
+    .v2-context-ocr,
+    .context-block-prompt,
+    .v2-context-prompt {
+      margin: 0;
+      font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+      font-size: 10px;
+      color: #fde68a;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 6px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .context-block-prompt,
+    .v2-context-prompt {
+      color: #a5f3fc;
+      max-height: 180px;
+    }
+
+    .context-block-header-row,
+    .v2-context-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .copy-prompt-btn,
+    .v2-copy-prompt-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 4px;
+      color: #94a3b8;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 7px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.16);
+        color: #f8fafc;
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+    }
+  }
+}
+
+@keyframes contextFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Everyone Mode Speaker Separation in the Same Row */
+.turns-container,
+.v2-turns-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.conversation-turn-line,
+.v2-conversation-turn-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 0;
+  line-height: 1.45;
+
+  &.turn-other {
+    .speaker-chip-badge,
+    .v2-speaker-chip-badge {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
+    .turn-text,
+    .v2-turn-text {
+      color: #e2e8f0;
+    }
+  }
+
+  &.turn-you {
+    .speaker-chip-badge,
+    .v2-speaker-chip-badge {
+      color: #c084fc;
+      background: rgba(192, 132, 252, 0.14);
+      border: 1px solid rgba(192, 132, 252, 0.35);
+    }
+    .turn-text,
+    .v2-turn-text {
+      color: #f3e8ff;
+    }
+  }
+}
+
+.turn-text,
+.v2-turn-text {
+  flex: 1;
+  font-size: 11.5px;
+  word-break: break-word;
+}
+
+.row-speaker-split,
+.v2-row-speaker-split {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.speaker-chip-badge,
+.v2-speaker-chip-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  &.speaker-you {
+    color: #c084fc;
+    background: rgba(192, 132, 252, 0.15);
+    border: 1px solid rgba(192, 132, 252, 0.35);
+  }
+
+  &.speaker-other {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.15);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+}
+
+/* ==========================================================================
+   LeetCode Syntax Highlighting Token Colors
+   ========================================================================== */
+
+:host ::ng-deep {
+  .lc-class,
+  .lc-type {
+    color: #4ec9b0 !important; /* Classes & Types: Teal */
+    font-weight: 600;
+  }
+
+  .lc-method {
+    color: #dcdcaa !important; /* Methods & Functions: Bright Yellow-Gold */
+  }
+
+  .lc-variable {
+    color: #9cdcfe !important; /* Variables & Parameters: Light Sky Blue */
+  }
+
+  .lc-keyword {
+    color: #c678dd !important; /* Keywords: Pink / Magenta */
+    font-weight: 600;
+  }
+
+  .lc-string {
+    color: #ce9178 !important; /* Strings: Warm Coral / Amber */
+  }
+
+  .lc-number {
+    color: #b5cea8 !important; /* Numbers: Mint Green */
+  }
+
+  .lc-boolean,
+  .lc-self {
+    color: #569cd6 !important; /* Booleans / Nullish: Deep Sky Blue */
+  }
+
+  .lc-comment {
+    color: #6a9955 !important; /* Comments: Olive Green italic */
+    font-style: italic !important;
+  }
+
+  .lc-operator {
+    color: #56b6c2 !important; /* Operators: Cyan */
   }
 }

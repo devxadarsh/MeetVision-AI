@@ -134,6 +134,11 @@ export class LocalProvider implements ILlmProvider {
       await new Promise((resolve) => setTimeout(resolve, 35));
     }
 
-    return { code };
+    const promptLen = (request.systemPrompt?.length || 0) + (request.userPrompt?.length || 0);
+    const inputTokens = Math.max(1, Math.round(promptLen / 4));
+    const outputTokens = Math.max(1, Math.round(fullText.length / 4));
+    const totalTokens = inputTokens + outputTokens;
+
+    return { code, totalTokens, inputTokens, outputTokens };
   }
 }

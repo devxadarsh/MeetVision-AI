@@ -30,6 +30,8 @@ import { StoreService } from './services/store.service';
 import { UpdaterService } from './services/updater.service';
 import { KnowledgeService } from './services/knowledge.service';
 import { SummaryService } from './services/summary.service';
+import { ScreenVisionService } from './services/screenvision.service';
+import { OcrModelId, ScreenVisionStatus, ScreenVisionCaptureResult } from '@shared/ipc';
 
 let mainWindow: BrowserWindow | null = null;
 let captureWindow: BrowserWindow | null = null;
@@ -44,6 +46,26 @@ const llmService = new LlmService();
 const updaterService = new UpdaterService();
 const knowledgeService = new KnowledgeService();
 const summaryService = new SummaryService(llmService);
+const screenVisionService = new ScreenVisionService(storeService);
+
+let lastShiftPressTime = 0;
+
+function attachDoubleShiftListener(win: BrowserWindow, windowName: string): void {
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && (input.key === 'Shift' || input.code?.startsWith('Shift'))) {
+      const now = Date.now();
+      if (now - lastShiftPressTime <= 450) {
+        lastShiftPressTime = 0;
+        console.log(`[ScreenVision] Double Shift detected from ${windowName} -> Triggering screen scan`);
+        screenVisionService.captureScreen().catch((err) => {
+          console.warn('[ScreenVision] Error in double-Shift triggered capture:', err);
+        });
+      } else {
+        lastShiftPressTime = now;
+      }
+    }
+  });
+}
 
 const recentTranscript: string[] = [];
 const questionsMap = new Map<string, Question>();
@@ -132,6 +154,8 @@ function createOverlayWindow(): void {
   } catch (err) {
     console.warn('setContentProtection failed:', err);
   }
+
+  attachDoubleShiftListener(mainWindow, 'OverlayWindow');
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/overlay';
@@ -259,6 +283,8 @@ function createSettingsWindow(): void {
     settingsWindow.loadURL(url.pathToFileURL(distPath).href + '#/settings');
   }
 
+  attachDoubleShiftListener(settingsWindow, 'SettingsWindow');
+
   broadcastSettingsVisibility(true);
 
   settingsWindow.on('close', (event) => {
@@ -357,6 +383,12 @@ function registerHotkeys(): void {
     isQuitting = true;
     app.quit();
   });
+
+  // ScreenVision scan shortcut: Cmd/Ctrl+Shift+S
+  globalShortcut.register('CommandOrControl+Shift+S', async () => {
+    console.log('[Hotkey] ScreenVision scan triggered via CommandOrControl+Shift+S');
+    await screenVisionService.captureScreen();
+  });
 }
 
 function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void {
@@ -364,6 +396,20 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
   const answerMode: AnswerMode = mode || settings.answerMode || 'short';
 
   question.status = 'answering';
+
+  // Snapshot context at the moment the answer is requested
+  const history = sttService.transcriptManager.getHistory();
+  const otherSegments = history.filter((s) => s.speaker === 'Other').map((s) => s.text);
+  const userSegments = history.filter((s) => s.speaker === 'You').map((s) => s.text);
+  const screenContext = screenVisionService.getVisibleScreenContext();
+
+  question.contextSnapshot = {
+    otherText: otherSegments.slice(-5).join(' ').trim() || (question.speaker === 'Other' ? question.text : undefined),
+    userText: userSegments.slice(-5).join(' ').trim() || (question.speaker === 'You' ? question.text : undefined),
+    ocrText: screenContext || undefined,
+    capturedAt: Date.now(),
+  };
+
   questionsMap.set(question.id, question);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, question);
@@ -385,10 +431,33 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
       thinkingEnabled: Boolean(settings.llmThinkingEnabled),
       codeLanguage: settings.codeLanguage,
       knowledgeSnippets: relevantSnippets,
+      screenContext,
     },
     (chunk) => {
-      if (chunk.isComplete && question.answer) {
+      if (chunk.isComplete) {
         question.status = 'answered';
+        if (!question.answer) {
+          question.answer = {
+            questionId: question.id,
+            mode: answerMode,
+            bullets: [],
+            createdAt: Date.now(),
+          };
+        }
+        question.answer.totalTokens = chunk.totalTokens ?? 0;
+        question.answer.inputTokens = chunk.inputTokens ?? 0;
+        question.answer.outputTokens = chunk.outputTokens ?? 0;
+
+        if (chunk.finalPrompt) {
+          if (!question.contextSnapshot) {
+            question.contextSnapshot = { capturedAt: Date.now() };
+          }
+          question.contextSnapshot.finalPrompt = chunk.finalPrompt;
+        }
+
+        console.log(
+          `[Main] Answer generation completed for "${question.text.slice(0, 50)}" | Tokens: total=${question.answer.totalTokens}, input=${question.answer.inputTokens}, output=${question.answer.outputTokens}`
+        );
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.ANSWER_CHUNK, chunk);
@@ -403,6 +472,9 @@ async function handleTranscriptSegment(segment: TranscriptSegment): Promise<void
     return;
   }
 
+  // Clean transcript with filler removal and technical vocabulary correction from screen
+  segment.text = screenVisionService.cleanTranscriptText(segment.text);
+
   // 1. Broadcast segment to overlay for Live Transcript view
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPT_UPDATE, segment);
@@ -410,7 +482,8 @@ async function handleTranscriptSegment(segment: TranscriptSegment): Promise<void
 
   // 2. On final segments, evaluate question detection and voice answer triggers
   if (segment.isFinal) {
-    recentTranscript.push(segment.text);
+    const speakerLabel = segment.speaker === 'You' ? '[You]' : '[Other Participant]';
+    recentTranscript.push(`${speakerLabel}: ${segment.text}`);
     if (recentTranscript.length > 25) {
       recentTranscript.shift();
     }
@@ -695,6 +768,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: Partial<AppSettings>) => {
     const updated = storeService.updateSettings(newSettings);
     await sttService.applySettings(updated);
+    if (newSettings.screenVision) {
+      screenVisionService.applySettings(newSettings.screenVision);
+    }
 
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
@@ -939,9 +1015,49 @@ function registerIpcHandlers(): void {
     }
     return true;
   });
+
+  // ScreenVision: Text-first Screen Understanding & OCR
+  ipcMain.handle(IPC_CHANNELS.SCREENVISION_STATUS_GET, async (): Promise<ScreenVisionStatus> => {
+    return screenVisionService.getStatus();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREENVISION_CAPTURE_NOW, async (): Promise<ScreenVisionCaptureResult> => {
+    return await screenVisionService.captureScreen();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.SCREENVISION_MODEL_DOWNLOAD,
+    async (_event, modelId: OcrModelId): Promise<boolean> => {
+      return await screenVisionService.downloadModel(modelId);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SCREENVISION_MODEL_DELETE,
+    async (_event, modelId: OcrModelId): Promise<boolean> => {
+      return await screenVisionService.deleteModel(modelId);
+    }
+  );
 }
 
 app.whenReady().then(() => {
+  // Initialize ScreenVision engine and wire event broadcasters
+  screenVisionService.init();
+
+  screenVisionService.onStatusChange((status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.SCREENVISION_STATUS_CHANGED, status);
+    }
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send(IPC_CHANNELS.SCREENVISION_STATUS_CHANGED, status);
+    }
+  });
+
+  screenVisionService.onDownloadProgress((prog) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send(IPC_CHANNELS.SCREENVISION_DOWNLOAD_PROGRESS, prog);
+    }
+  });
   // Hide Dock icon on macOS so overlay stays out of Cmd-Tab / Dock
   if (process.platform === 'darwin' && app.dock) {
     app.dock.hide();

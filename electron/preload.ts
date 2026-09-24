@@ -16,6 +16,10 @@ import {
   ParakeetModelType,
   ParakeetDownloadProgress,
   LlmProviderInfo,
+  OcrModelId,
+  ScreenVisionStatus,
+  OcrDownloadProgress,
+  ScreenVisionCaptureResult,
 } from '@shared/ipc';
 
 const api: ElectronAPI = {
@@ -175,6 +179,37 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC_CHANNELS.PARAKEET_DOWNLOAD_PROGRESS, handler);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.PARAKEET_DOWNLOAD_PROGRESS, handler);
+    };
+  },
+  // ScreenVision: Text-first Screen Understanding & OCR Management
+  getScreenVisionStatus: (): Promise<ScreenVisionStatus> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_STATUS_GET);
+  },
+  captureScreenVisionNow: (): Promise<ScreenVisionCaptureResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_CAPTURE_NOW);
+  },
+  downloadOcrModel: (modelId: OcrModelId): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_MODEL_DOWNLOAD, modelId);
+  },
+  deleteOcrModel: (modelId: OcrModelId): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_MODEL_DELETE, modelId);
+  },
+  onOcrDownloadProgress: (callback: (progress: OcrDownloadProgress) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, progress: OcrDownloadProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on(IPC_CHANNELS.SCREENVISION_DOWNLOAD_PROGRESS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SCREENVISION_DOWNLOAD_PROGRESS, handler);
+    };
+  },
+  onScreenVisionStatusChanged: (callback: (status: ScreenVisionStatus) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, status: ScreenVisionStatus) => {
+      callback(status);
+    };
+    ipcRenderer.on(IPC_CHANNELS.SCREENVISION_STATUS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SCREENVISION_STATUS_CHANGED, handler);
     };
   },
   // Pluggable STT Engines

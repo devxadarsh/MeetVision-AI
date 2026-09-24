@@ -70,6 +70,14 @@
       <button
         type="button"
         class="tab-link"
+        [class.active]="activeTab() === 'screenvision'"
+        (click)="activeTab.set('screenvision')"
+      >
+        👁️ ScreenVision
+      </button>
+      <button
+        type="button"
+        class="tab-link"
         [class.active]="activeTab() === 'overlay'"
         (click)="activeTab.set('overlay')"
       >
@@ -1081,7 +1089,212 @@
       </section>
     }
 
-    <!-- Tab: Overlay Sizing & Dimensions -->
+    <!-- Tab: ScreenVision -->
+    @if (activeTab() === 'screenvision') {
+      <section class="section-panel">
+        <div class="panel-header">
+          <div class="header-with-action">
+            <div>
+              <h2>ScreenVision & Context OCR</h2>
+              <p>
+                Understands visible meeting screen content (code, slides, architecture) using local OCR and injects live context into AI answers.
+              </p>
+            </div>
+            <button
+              class="btn btn-primary"
+              [disabled]="isScanningScreen()"
+              (click)="scanScreenNow()"
+            >
+              @if (isScanningScreen()) {
+                <span class="spinner-sm"></span> Scanning...
+              } @else {
+                👁️ Scan Screen Now
+              }
+            </button>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <!-- Enable ScreenVision -->
+          <div class="form-group toggle-group full-width">
+            <div class="toggle-info">
+              <label class="form-label" for="sv-enable">Enable ScreenVision</label>
+              <span class="field-hint">
+                Captures display frames via background DesktopCapturer (overlay window is excluded automatically via capture protection).
+              </span>
+            </div>
+            <label class="toggle-switch">
+              <input
+                id="sv-enable"
+                type="checkbox"
+                [checked]="screenVisionEnabled()"
+                (change)="toggleScreenVision()"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Auto Scan Interval -->
+          <div class="form-group">
+            <label class="form-label" for="sv-interval">Auto-Scan Interval</label>
+            <select
+              id="sv-interval"
+              class="form-select"
+              [value]="screenVisionInterval()"
+              (change)="onScreenVisionIntervalChange($event)"
+            >
+              <option [value]="0">Manual Only (Hotkey or Button)</option>
+              <option [value]="5">Every 5 seconds (Fast)</option>
+              <option [value]="10">Every 10 seconds (Balanced)</option>
+              <option [value]="30">Every 30 seconds (Eco)</option>
+              <option [value]="60">Every 60 seconds (Minimal)</option>
+            </select>
+            <span class="field-hint">
+              Global shortcut: Press <code>Shift</code> twice (Double Shift) or <code>Ctrl+Shift+S</code> / <code>Cmd+Shift+S</code> to trigger on demand anytime.
+            </span>
+          </div>
+
+          <!-- Technical Vocabulary / Token Correction -->
+          <div class="form-group toggle-group full-width">
+            <div class="toggle-info">
+              <label class="form-label" for="sv-tech-words">Screen-Guided Terminology Correction</label>
+              <span class="field-hint">
+                Uses visible screen tokens (variable names, package IDs, frameworks) and removes filler words (um, uh) to sanitize meeting transcripts before LLM processing.
+              </span>
+            </div>
+            <label class="toggle-switch">
+              <input
+                id="sv-tech-words"
+                type="checkbox"
+                [checked]="screenVisionTechWords()"
+                (change)="toggleTechWordCorrection()"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- OCR Engine Catalog -->
+        <div class="sv-catalog-header mt-6">
+          <div class="header-with-action">
+            <div>
+              <h3>OCR Model Catalog</h3>
+              <p class="field-hint">
+                Local on-device OCR models for offline, zero-latency screen reading.
+              </p>
+            </div>
+            <span class="sv-active-badge">
+              Active: <strong>{{ activeModelInfo()?.name || 'None' }}</strong>
+            </span>
+          </div>
+        </div>
+
+        <div class="sv-model-grid">
+          @for (model of ocrModelsList(); track model.id) {
+            <div
+              class="sv-model-card"
+              [class.sv-model-selected]="selectedOcrModel() === model.id"
+            >
+              <div class="sv-card-top">
+                <div class="sv-title-wrap">
+                  <span class="sv-model-name">{{ model.name }}</span>
+                  <span class="sv-model-ver">{{ model.subtitle }}</span>
+                </div>
+                <div class="sv-badges">
+                  @if (model.isInbuilt) {
+                    <span class="badge badge-inbuilt">Inbuilt Default</span>
+                  }
+                  @if (isModelInstalled(model.id) && !model.isInbuilt) {
+                    <span class="badge badge-downloaded">Downloaded</span>
+                  }
+                  @if (!isModelInstalled(model.id) && !model.isInbuilt) {
+                    <span class="badge badge-remote">{{ model.downloadSizeMb }} MB</span>
+                  }
+                </div>
+              </div>
+
+              <p class="sv-model-desc">{{ model.description }}</p>
+
+              <div class="sv-specs">
+                <span class="sv-spec-item">⚡ Speed: {{ model.speed }}</span>
+                <span class="sv-spec-item">🎯 Acc: {{ model.accuracy }}</span>
+                <span class="sv-spec-item">💻 Arch: {{ model.architecture }}</span>
+              </div>
+
+              <!-- Progress bar if downloading -->
+              @if (getOcrDownloadProgress(model.id); as prog) {
+                <div class="sv-download-progress">
+                  <div class="progress-bar">
+                    <div
+                      class="progress-fill"
+                      [style.width.%]="prog.percent"
+                    ></div>
+                  </div>
+                  <span class="progress-text">
+                    Downloading... {{ prog.percent }}%
+                  </span>
+                </div>
+              }
+
+              <div class="sv-card-actions">
+                @if (selectedOcrModel() === model.id) {
+                  <button class="btn btn-sm btn-selected" disabled>
+                    ✓ Selected
+                  </button>
+                } @else if (isModelInstalled(model.id)) {
+                  <button
+                    class="btn btn-sm btn-primary"
+                    (click)="selectOcrModel(model.id)"
+                  >
+                    Select Engine
+                  </button>
+                } @else {
+                  <button
+                    class="btn btn-sm btn-outline"
+                    [disabled]="getOcrDownloadProgress(model.id)?.status === 'downloading'"
+                    (click)="downloadOcrModel(model.id)"
+                  >
+                    ⬇ Download ({{ model.downloadSizeMb }} MB)
+                  </button>
+                }
+
+                @if (!model.isInbuilt && isModelInstalled(model.id) && selectedOcrModel() !== model.id) {
+                  <button
+                    class="btn btn-sm btn-danger-outline"
+                    (click)="deleteOcrModel(model.id)"
+                  >
+                    Delete
+                  </button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+        <!-- Live Extracted Screen Context Inspector -->
+        <div class="sv-inspector mt-6">
+          <div class="inspector-header">
+            <h4>Live Screen Context Inspector</h4>
+            <div class="inspector-meta">
+              <span>Words: {{ screenVisionStatus()?.lastScanWordCount || 0 }}</span>
+              @if (screenVisionStatus()?.lastScanTimestamp) {
+                <span>Scanned: {{ formatScanTime(screenVisionStatus()!.lastScanTimestamp!) }}</span>
+              }
+            </div>
+          </div>
+
+          @if (screenVisionStatus()?.lastExtractedText) {
+            <div class="sv-text-preview">
+              <pre>{{ screenVisionStatus()?.lastExtractedText }}</pre>
+            </div>
+          } @else {
+            <div class="sv-empty-preview">
+              <p>No screen content extracted yet. Click <strong>Scan Screen Now</strong> or press <code>Ctrl+Shift+S</code> / <code>Cmd+Shift+S</code> to extract visible text.</p>
+            </div>
+          }
+        </div>
+      </section>
+    }
     <!-- Tab: Overlay Appearance & Sizing (Compact) -->
     @if (activeTab() === 'overlay') {
       <section class="section-panel compact-sizing-panel">
