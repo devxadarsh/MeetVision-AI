@@ -196,6 +196,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly multiWorkspace = signal<boolean>(true);
   readonly transcriptionMode = signal<TranscriptionMode>('everyone');
   readonly hasMicPermission = signal<boolean>(true);
+  readonly isMacOS = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent || navigator.platform);
 
   // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
   readonly currentTab = signal<'questions' | 'transcript' | 'summary'>('questions');

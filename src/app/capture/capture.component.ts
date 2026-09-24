@@ -232,7 +232,7 @@ export class CaptureComponent implements OnInit, OnDestroy {
       }
     }
 
-    // 2) OS-level loopback via getDisplayMedia (Windows).
+    // 2) OS-level loopback via getDisplayMedia (Windows & macOS ScreenCaptureKit).
     if (!stream && typeof mediaDevices.getDisplayMedia === 'function') {
       try {
         const display = await mediaDevices.getDisplayMedia({
@@ -241,18 +241,20 @@ export class CaptureComponent implements OnInit, OnDestroy {
         });
         if (display.getAudioTracks() && display.getAudioTracks().length > 0) {
           stream = display;
+          // Stop unused video tracks so they don't consume CPU or GPU resources
+          display.getVideoTracks().forEach((t) => t.stop());
         } else {
           display.getTracks().forEach((t) => t.stop());
         }
-      } catch {
-        // No loopback available through display capture on this platform.
+      } catch (err) {
+        console.warn('[CaptureComponent] OS-level loopback getDisplayMedia unavailable:', err);
       }
     }
 
     if (!stream) {
       // Never fall back to the default microphone as "system" audio.
       throw new Error(
-        'No system audio (loopback) device found. Select a virtual loopback device such as BlackHole in Settings → Audio, or use Everyone mode to capture your microphone.'
+        'No system audio (loopback) stream available. On macOS, ensure Screen & System Audio Recording permission is granted. On Windows, verify Stereo Mix / audio permissions, or select a loopback device in Settings.'
       );
     }
 

@@ -1327,9 +1327,10 @@
           </div>
           <div class="v2-footer-right">
             <span class="v2-footer-shortcut"><kbd>↑↓←→</kbd> Move</span>
-            <span class="v2-footer-shortcut"><kbd>⌘⇧H</kbd> Hide</span>
-            <span class="v2-footer-shortcut"><kbd>⌘⇧M</kbd> Passthrough</span>
-            <span class="v2-footer-shortcut"><kbd>⌘⇧C</kbd> Clear</span>
+            <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧H' : 'Ctrl+Shift+H' }}</kbd> Hide</span>
+            <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧M' : 'Ctrl+Shift+M' }}</kbd> Passthrough</span>
+            <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧C' : 'Ctrl+Shift+C' }}</kbd> Clear</span>
+            <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧Q' : 'Ctrl+Shift+Q' }}</kbd> Quit</span>
           </div>
         </footer>
       }

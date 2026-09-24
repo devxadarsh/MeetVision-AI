@@ -7,7 +7,7 @@
   "scripts": {
     "ng": "ng",
     "start": "npm run dev",
-    "dev": "concurrently -k -s first \"npm run dev:ng\" \"wait-on tcp:4200 && npm run dev:electron\"",
+    "dev": "concurrently -k -s first \"npm run dev:ng\" \"wait-on http-get://localhost:4200 && npm run dev:electron\"",
     "dev:ng": "ng serve",
     "dev:electron": "npm run build:electron && electron .",
     "build": "npm run build:ng && npm run build:electron",

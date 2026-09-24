@@ -16,11 +16,14 @@ export class TranscriptManager {
   }
 
   emit(segment: TranscriptSegment): void {
+    const FILLER_PATTERN = /\b(?:um+|uh+|hmm+|ah+|er+m?|eh+)\b/gi;
     // 1. Sanitize text
     let cleanText = (segment.text || '')
       .replace(/\[(?:BLANK_AUDIO|MUSIC|NOISE|APPLAUSE|SILENCE)\]/gi, '')
       .replace(/\((?:blank_audio|music|noise|applause|silence|inaudible)\)/gi, '')
       .replace(/<\|.*?\|>/g, '') // remove special tokens
+      .replace(FILLER_PATTERN, '') // remove filler words
+      .replace(/\s{2,}/g, ' ') // collapse gaps left by removed fillers
       .trim();
 
     const speaker = segment.speaker || 'Other';

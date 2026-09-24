@@ -1,4 +1,8 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
+
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
+}
 import * as path from 'path';
 import * as url from 'url';
 import {
@@ -131,12 +135,17 @@ function createOverlayWindow(): void {
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/overlay';
-    mainWindow.loadURL(devUrl).catch((err) => {
-      console.warn('Initial loadURL failed, retrying in 1s:', err);
-      setTimeout(() => {
-        mainWindow?.loadURL(devUrl);
-      }, 1000);
-    });
+    const loadOverlay = (retries = 6) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadURL(devUrl).catch((err) => {
+        if (retries > 0) {
+          setTimeout(() => loadOverlay(retries - 1), 800);
+        } else {
+          console.warn('[Main] Overlay window failed to load dev server:', err);
+        }
+      });
+    };
+    loadOverlay();
   } else {
     const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     mainWindow.loadURL(url.pathToFileURL(distPath).href + '#/overlay');
@@ -164,12 +173,17 @@ function createCaptureWindow(): void {
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/capture';
-    captureWindow.loadURL(devUrl).catch((err) => {
-      console.warn('Capture window initial loadURL failed, retrying in 1s:', err);
-      setTimeout(() => {
-        captureWindow?.loadURL(devUrl);
-      }, 1000);
-    });
+    const loadCapture = (retries = 6) => {
+      if (!captureWindow || captureWindow.isDestroyed()) return;
+      captureWindow.loadURL(devUrl).catch((err) => {
+        if (retries > 0) {
+          setTimeout(() => loadCapture(retries - 1), 800);
+        } else {
+          console.warn('[Main] Capture window failed to load dev server:', err);
+        }
+      });
+    };
+    loadCapture();
   } else {
     const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     captureWindow.loadURL(url.pathToFileURL(distPath).href + '#/capture');
@@ -335,6 +349,13 @@ function registerHotkeys(): void {
       mainWindow.setOpacity(0);
       mainWindow.setIgnoreMouseEvents(true);
     }
+  });
+
+  // Quit application shortcut
+  globalShortcut.register('CommandOrControl+Shift+Q', () => {
+    console.log('[Hotkey] CommandOrControl+Shift+Q triggered -> Quitting application');
+    isQuitting = true;
+    app.quit();
   });
 }
 
@@ -947,8 +968,8 @@ app.whenReady().then(() => {
     return permission === 'media' || (permission as string) === 'display-capture';
   });
 
-  // Configure loopback audio capture permission handler
-  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+  // Configure loopback audio capture permission handler (Windows & macOS)
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     let callbackCalled = false;
     const safeCallback = (streams: Parameters<typeof callback>[0]) => {
       if (!callbackCalled) {
@@ -962,17 +983,18 @@ app.whenReady().then(() => {
     };
 
     try {
-      if (process.platform === 'win32') {
+      // Both Windows and macOS require a screen video source when providing loopback audio to getDisplayMedia
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      if (sources && sources.length > 0) {
         safeCallback({
+          video: sources[0],
           audio: 'loopback',
         });
         return;
       }
 
-      // On macOS and other platforms, loopback string is not supported directly in getDisplayMedia.
-      // Calling callback with empty streams rejects getDisplayMedia cleanly,
-      // allowing capture window to fall back to getUserMedia (microphone / BlackHole).
-      safeCallback({});
+      // Fallback if screen enumeration returned empty
+      safeCallback({ audio: 'loopback' });
     } catch (err) {
       console.warn('[Main] setDisplayMediaRequestHandler error:', err);
       safeCallback({});

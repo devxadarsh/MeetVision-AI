@@ -1681,7 +1681,7 @@
           <div class="shortcuts-grid">
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>H</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Toggle Show / Hide Overlay</strong>
@@ -1691,7 +1691,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>M</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Toggle Click-Through Mode</strong>
@@ -1701,11 +1701,21 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>Esc</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>Esc</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Panic Hide</strong>
                 <p>Instantly hide the overlay window. Perfect for quick presentation moments or screen shares.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>Q</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Quit Application</strong>
+                <p>Completely exit MeetVision AI.</p>
               </div>
             </div>
 
@@ -1726,7 +1736,7 @@
           <div class="shortcuts-grid">
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>C</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>C</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Clear Unpinned Questions</strong>
@@ -1736,7 +1746,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>P</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>P</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Pin Latest Question</strong>
@@ -1746,7 +1756,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>Y</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>Y</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Copy Latest Answer</strong>
@@ -1756,7 +1766,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>R</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>R</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Regenerate Answer</strong>
