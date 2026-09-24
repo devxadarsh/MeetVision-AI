@@ -402,7 +402,7 @@
             <!-- Parakeet / NeMo Model Cards Grid -->
             <label class="form-label" style="margin-top: 14px;">MeetVision AI — Transcription Models for NVIDIA Parakeet</label>
             <div class="model-cards-grid">
-              @for (m of parakeetModelsList; track m.id) {
+              @for (m of parakeetModelsList(); track m.id) {
                 <div class="model-box" [class.selected]="parakeetModel() === m.id">
                   <div class="model-info">
                     <div class="model-title-line">
@@ -418,24 +418,33 @@
                     <p class="model-summary">{{ m.description }}</p>
 
                     <div class="model-installed-status">
-                      @if (parakeetStatus()?.installedModels?.includes(m.id)) {
+                      @if (m.unsupported) {
+                        <span class="missing-tag">Not available on this platform</span>
+                      } @else if (parakeetStatus()?.installedModels?.includes(m.id)) {
                         <span class="installed-tag">✓ Ready to use • {{ m.fileSizeStr }}</span>
                       } @else {
                         <span class="missing-tag">Not installed ({{ m.fileSizeStr }})</span>
                       }
+                      @if (!m.unsupported) {
+                        <span class="model-runtime-tag" [title]="m.verified ? 'Validated on real hardware' : 'Artifact not yet validated on real hardware'">
+                          {{ m.runtime }}{{ m.verified ? '' : ' • unverified' }}
+                        </span>
+                      }
                     </div>
 
                     <!-- In-Card Download Progress Bar -->
-                    @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
-                      <div class="card-download-progress">
+                    @if ((isDownloadingParakeet() || isParakeetPaused()) && parakeetDownloadProgress()?.model === m.id) {
+                      <div class="card-download-progress" [class.paused]="isParakeetPaused()">
                         <div class="card-progress-header">
-                          <span class="progress-title">Downloading {{ m.name }}...</span>
+                          <span class="progress-title">
+                            {{ isParakeetPaused() ? '⏸️ Paused' : '⬇️ Downloading' }} {{ m.name }}...
+                          </span>
                           <span class="progress-stats">
                             {{ parakeetDownloadProgress()?.downloadedMb }} MB / {{ parakeetDownloadProgress()?.totalMb }} MB ({{ parakeetDownloadProgress()?.percent }}%)
                           </span>
                         </div>
                         <div class="progress-track">
-                          <div class="progress-fill" [style.width.%]="parakeetDownloadProgress()?.percent"></div>
+                          <div class="progress-fill" [class.paused]="isParakeetPaused()" [style.width.%]="parakeetDownloadProgress()?.percent"></div>
                         </div>
                       </div>
                     }
@@ -453,6 +462,19 @@
                       </button>
                       <button
                         type="button"
+                        class="btn-reveal btn-sm"
+                        [disabled]="parakeetRevealingModel() === m.id"
+                        [title]="isMacOS ? 'Show ' + m.name + ' in Finder' : 'Show ' + m.name + ' in File Explorer'"
+                        (click)="revealParakeetModel(m.id)"
+                      >
+                        @if (parakeetRevealingModel() === m.id) {
+                          ⏳ Opening...
+                        } @else {
+                          {{ isMacOS ? '🔍 Show in Finder' : '📁 Show in Explorer' }}
+                        }
+                      </button>
+                      <button
+                        type="button"
                         class="btn-delete btn-sm"
                         title="Delete {{ m.name }} model to free disk space"
                         (click)="deleteParakeetModel(m.id)"
@@ -460,18 +482,50 @@
                         🗑️ Delete
                       </button>
                     } @else {
-                      <button
-                        type="button"
-                        class="btn-primary btn-sm"
-                        [disabled]="isDownloadingParakeet()"
-                        (click)="downloadParakeetModel(m.id)"
-                      >
-                        @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
-                          Downloading ({{ parakeetDownloadProgress()?.percent }}%)...
-                        } @else {
-                          Download ({{ m.fileSizeStr }})
-                        }
-                      </button>
+                      @if (isDownloadingParakeet() && parakeetDownloadProgress()?.model === m.id) {
+                        <button
+                          type="button"
+                          class="btn-pause btn-sm"
+                          title="Pause downloading {{ m.name }}"
+                          (click)="pauseParakeetDownload()"
+                        >
+                          ⏸️ Pause
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-cancel btn-sm"
+                          title="Cancel downloading {{ m.name }}"
+                          (click)="cancelParakeetDownload()"
+                        >
+                          ❌ Cancel
+                        </button>
+                      } @else if (isParakeetPaused() && parakeetDownloadProgress()?.model === m.id) {
+                        <button
+                          type="button"
+                          class="btn-primary btn-sm btn-resume"
+                          title="Resume downloading {{ m.name }}"
+                          (click)="downloadParakeetModel(m.id)"
+                        >
+                          ▶️ Resume ({{ parakeetDownloadProgress()?.percent }}%)
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-cancel btn-sm"
+                          title="Cancel downloading {{ m.name }}"
+                          (click)="cancelParakeetDownload()"
+                        >
+                          ❌ Cancel
+                        </button>
+                      } @else {
+                        <button
+                          type="button"
+                          class="btn-primary btn-sm"
+                          [disabled]="isDownloadingParakeet() || m.unsupported"
+                          (click)="downloadParakeetModel(m.id)"
+                        >
+                          ⬇️ Download ({{ m.fileSizeStr }})
+                        </button>
+                      }
                     }
                   </div>
                 </div>
@@ -479,14 +533,49 @@
             </div>
 
             <!-- Parakeet Download Progress Bar (Global fallback) -->
-            @if (isDownloadingParakeet() && parakeetDownloadProgress(); as prog) {
-              <div class="download-progress-container">
+            @if ((isDownloadingParakeet() || isParakeetPaused()) && parakeetDownloadProgress(); as prog) {
+              <div class="download-progress-container" [class.paused]="isParakeetPaused()">
                 <div class="progress-header">
-                  <span>Downloading NVIDIA Parakeet ({{ prog.model }})...</span>
-                  <span>{{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)</span>
+                  <div class="progress-info">
+                    <span class="progress-status-text">
+                      {{ isParakeetPaused() ? '⏸️ Paused' : '⬇️ Downloading' }} NVIDIA Parakeet ({{ prog.model }})...
+                    </span>
+                    <span class="progress-stats-text">
+                      {{ prog.downloadedMb }} MB / {{ prog.totalMb }} MB ({{ prog.percent }}%)
+                    </span>
+                  </div>
+                  <div class="progress-actions">
+                    @if (isDownloadingParakeet()) {
+                      <button
+                        type="button"
+                        class="btn-pause-inline"
+                        title="Pause download"
+                        (click)="pauseParakeetDownload()"
+                      >
+                        ⏸️ Pause
+                      </button>
+                    } @else if (isParakeetPaused()) {
+                      <button
+                        type="button"
+                        class="btn-resume-inline"
+                        title="Resume download"
+                        (click)="downloadParakeetModel(prog.model)"
+                      >
+                        ▶️ Resume
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      class="btn-cancel-inline"
+                      title="Cancel download"
+                      (click)="cancelParakeetDownload()"
+                    >
+                      ❌ Cancel
+                    </button>
+                  </div>
                 </div>
                 <div class="progress-track">
-                  <div class="progress-fill" [style.width.%]="prog.percent"></div>
+                  <div class="progress-fill" [class.paused]="isParakeetPaused()" [style.width.%]="prog.percent"></div>
                 </div>
               </div>
             }
@@ -779,7 +868,10 @@
                 MeetVision AI will capture it as <strong>Meeting Audio</strong>!
               </li>
               <li>
-                <strong>Option 2 (Default Input):</strong> If your meeting audio plays through your speakers/headset, MeetVision AI captures audio via your selected input device.
+                <strong>Option 2 (Meeting audio through your speakers/headset?):</strong> MeetVision AI never
+                uses the default microphone as meeting audio, because that would record your own voice.
+                Install a loopback device and select it above, or switch the overlay to
+                <strong>Everyone</strong> mode to capture your microphone instead.
               </li>
             </ol>
           </div>
@@ -855,24 +947,95 @@
             [value]="llmProvider()"
             (change)="onLlmProviderChange($event)"
           >
-            <option value="local">Local Streaming Generator (Instant / Offline)</option>
-            <option value="anthropic">Anthropic Claude (Official Claude Messages API)</option>
+            @for (provider of llmProviders(); track provider.id) {
+              <option [value]="provider.id">{{ provider.label }}</option>
+            }
           </select>
+          @if (activeLlmProvider(); as provider) {
+            <span class="field-hint">{{ provider.description }}</span>
+          }
         </div>
 
-        <!-- Claude Model -->
+        <!-- Model Identifier -->
         <div class="form-group">
           <label for="llm-model" class="form-label">Model Identifier</label>
           <select
             id="llm-model"
             class="form-select"
-            [value]="llmModel()"
+            [value]="selectLlmModel()"
             (change)="onLlmModelChange($event)"
           >
-            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
-            <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fastest)</option>
-            <option value="claude-3-opus-20240229">Claude 3 Opus (Deep Analysis)</option>
+            @for (model of availableLlmModels(); track model.id) {
+              <option [value]="model.id">{{ model.label }}</option>
+            }
+            @if (activeLlmProvider()?.allowCustomModel) {
+              <option [value]="customModelValue">Custom model id…</option>
+            }
           </select>
+          @if (activeLlmProvider()?.allowCustomModel && customModelMode()) {
+            <input
+              type="text"
+              class="form-input mono"
+              placeholder="e.g. mistralai/mistral-large"
+              [value]="customLlmModel()"
+              (input)="onCustomLlmModelChange($event)"
+            />
+            <span class="field-hint">
+              Enter any model id supported by {{ activeLlmProvider()?.label }}.
+            </span>
+          }
+          @if (activeLlmProvider(); as provider) {
+            @if (provider.requiresApiKey && !hasKey(provider.id)) {
+              <span class="field-hint">
+                No API key configured for {{ provider.label }}. Add one in the API Keys tab, or answers fall back to the offline generator.
+              </span>
+            }
+          }
+        </div>
+
+        <!-- Reasoning Mode (provider-specific) -->
+        @if (activeLlmProvider(); as provider) {
+          @if (provider.supportsReasoningToggle) {
+            <div class="form-group">
+              <div class="label-row">
+                <label for="llm-reasoning" class="form-label">Reasoning Mode</label>
+                <span class="key-status-pill" [class.active]="llmThinkingEnabled()" [class.empty]="!llmThinkingEnabled()">
+                  {{ llmThinkingEnabled() ? '✓ Enabled' : 'Disabled' }}
+                </span>
+              </div>
+              <label class="toggle-switch">
+                <input
+                  id="llm-reasoning"
+                  type="checkbox"
+                  [checked]="llmThinkingEnabled()"
+                  (change)="onLlmThinkingChange($event)"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="field-hint">
+                Streams chain-of-thought before the answer. Slower first token and the temperature setting is ignored while enabled.
+              </span>
+            </div>
+          }
+        }
+
+        <!-- Code Answer Language (coding / DSA questions) -->
+        <div class="form-group">
+          <label for="code-language" class="form-label">Code Answer Language</label>
+          <select
+            id="code-language"
+            class="form-select"
+            [value]="codeLanguage()"
+            (change)="onCodeLanguageChange($event)"
+          >
+            @for (lang of codeLanguages; track lang.value) {
+              <option [value]="lang.value">{{ lang.label }}</option>
+            }
+          </select>
+          <span class="field-hint">
+            Used when a question asks for code or a DSA solution. The model picks the answer format
+            automatically from the question type (talking points, system design, or coding).
+          </span>
         </div>
 
         <!-- Temperature Slider -->
@@ -1469,37 +1632,39 @@
           </div>
         </div>
 
-        <!-- Anthropic API Key -->
-        <div class="form-group">
-          <div class="label-row">
-            <label for="anthropic-key" class="form-label">Anthropic API Key</label>
-            @if (hasAnthropicKey()) {
-              <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
-            } @else {
-              <span class="key-status-pill empty">No Key Configured</span>
-            }
+        <!-- Provider API Keys -->
+        @for (provider of apiKeyProviders(); track provider.id) {
+          <div class="form-group">
+            <div class="label-row">
+              <label [for]="'api-key-' + provider.id" class="form-label">{{ provider.label }} API Key</label>
+              @if (hasKey(provider.id)) {
+                <span class="key-status-pill active">✓ Key Configured & Encrypted</span>
+              } @else {
+                <span class="key-status-pill empty">No Key Configured</span>
+              }
+            </div>
+            <div class="key-input-row">
+              <input
+                [id]="'api-key-' + provider.id"
+                [type]="isApiKeyVisible(provider.id) ? 'text' : 'password'"
+                class="form-input mono"
+                [placeholder]="provider.id === 'deepseek' ? 'sk-...' : 'sk-ant-api03-...'"
+                [value]="apiKeyValue(provider.id)"
+                (input)="onApiKeyChange(provider.id, $event)"
+              />
+              <button
+                type="button"
+                class="btn-secondary toggle-key-btn"
+                (click)="toggleApiKeyVisibility(provider.id)"
+              >
+                {{ isApiKeyVisible(provider.id) ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+            <span class="field-hint">
+              Never shared or stored unencrypted. Leave blank to retain currently saved key.
+            </span>
           </div>
-          <div class="key-input-row">
-            <input
-              id="anthropic-key"
-              [type]="showAnthropicKey() ? 'text' : 'password'"
-              class="form-input mono"
-              placeholder="sk-ant-api03-..."
-              [value]="anthropicKeyInput()"
-              (input)="onAnthropicKeyChange($event)"
-            />
-            <button
-              type="button"
-              class="btn-secondary toggle-key-btn"
-              (click)="showAnthropicKey.set(!showAnthropicKey())"
-            >
-              {{ showAnthropicKey() ? 'Hide' : 'Show' }}
-            </button>
-          </div>
-          <span class="field-hint">
-            Never shared or stored unencrypted. Leave blank to retain currently saved key.
-          </span>
-        </div>
+        }
       </section>
     }
 
@@ -1516,7 +1681,7 @@
           <div class="shortcuts-grid">
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>H</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Toggle Show / Hide Overlay</strong>
@@ -1526,7 +1691,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>M</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>M</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Toggle Click-Through Mode</strong>
@@ -1536,11 +1701,21 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>Esc</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>Esc</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Panic Hide</strong>
                 <p>Instantly hide the overlay window. Perfect for quick presentation moments or screen shares.</p>
+              </div>
+            </div>
+
+            <div class="shortcut-card">
+              <div class="shortcut-key">
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>Q</kbd>
+              </div>
+              <div class="shortcut-desc">
+                <strong>Quit Application</strong>
+                <p>Completely exit MeetVision AI.</p>
               </div>
             </div>
 
@@ -1561,7 +1736,7 @@
           <div class="shortcuts-grid">
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>C</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>C</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Clear Unpinned Questions</strong>
@@ -1571,7 +1746,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>P</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>P</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Pin Latest Question</strong>
@@ -1581,7 +1756,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>Y</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>Y</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Copy Latest Answer</strong>
@@ -1591,7 +1766,7 @@
 
             <div class="shortcut-card">
               <div class="shortcut-key">
-                <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>R</kbd>
+                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>R</kbd>
               </div>
               <div class="shortcut-desc">
                 <strong>Regenerate Answer</strong>
@@ -1654,9 +1829,11 @@
           <div class="privacy-content">
             <h3>Third-Party API Disclosures</h3>
             <p>
-              When using Anthropic Claude for AI answer synthesis, prompt text is sent to Anthropic's API
-              via secure TLS. All Speech-to-Text transcription (NVIDIA Parakeet, Apple Speech) runs
-              100% on-device with zero audio or speech data leaving your computer.
+              When a cloud language model is selected (DeepSeek by default, or Anthropic Claude),
+              prompt text is sent to that provider's API via secure TLS. Selecting the Local
+              Streaming Generator keeps answer synthesis fully offline. All Speech-to-Text
+              transcription (NVIDIA Parakeet, Apple Speech) runs 100% on-device with zero audio
+              or speech data leaving your computer.
             </p>
           </div>
         </div>

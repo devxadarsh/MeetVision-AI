@@ -21,7 +21,16 @@ import {
   ParakeetModelType,
   ParakeetStatus,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
+  CodeLanguage,
 } from '@shared/ipc';
+import type { LlmProviderId } from '@shared/llm-provider-catalog';
+import {
+  STT_MODEL_CATALOG,
+  artifactTotalBytes,
+  formatModelBytes,
+} from '@shared/stt-model-catalog';
+import type { SttPlatform } from '@shared/stt-model-catalog';
 
 export interface ParakeetModelCard {
   id: ParakeetModelType;
@@ -32,7 +41,69 @@ export interface ParakeetModelCard {
   ramRequirement: string;
   fileSizeStr: string;
   badge: string;
+  /** Inference runtime backing this model on the host platform. */
+  runtime: string;
+  /** False when the artifact choice has not been validated on real hardware. */
+  verified: boolean;
+  /** True when no artifact is mapped for the host platform. */
+  unsupported: boolean;
 }
+
+const PARAKEET_BADGES: Record<ParakeetModelType, string> = {
+  'parakeet-flash': 'Ultra Low Latency',
+  'parakeet-tdt-v2': 'Balanced English',
+  'parakeet-tdt-v3': '25 Languages',
+  'parakeet-ctc-1.1b': 'Flagship 1.1B',
+  'nemotron-speech-3.5': 'Streaming English',
+  'nemotron-3.5-multilingual': 'Multilingual',
+};
+
+/**
+ * Best-effort platform key for the renderer. Used only for display sizes: both
+ * macOS arches and both Windows arches share identical payloads, so a rough
+ * guess is safe. The authoritative key arrives with `ParakeetStatus.platform`.
+ */
+function detectRendererPlatform(): SttPlatform {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (/Windows/i.test(ua)) {
+    return /Win64|x64|WOW64/i.test(ua) ? 'win32-x64' : 'win32-ia32';
+  }
+  return 'darwin-arm64';
+}
+
+function buildParakeetCards(platform: SttPlatform): ParakeetModelCard[] {
+  return STT_MODEL_CATALOG.map((entry) => {
+    const artifact = entry.artifacts[platform];
+    return {
+      id: entry.id,
+      name: entry.name,
+      subtitle: entry.subtitle,
+      icon: entry.icon,
+      description: entry.description,
+      ramRequirement: entry.ramRequirement,
+      fileSizeStr: artifact ? `~${formatModelBytes(artifactTotalBytes(artifact))}` : 'Not available',
+      badge: PARAKEET_BADGES[entry.id],
+      runtime: artifact?.runtime ?? 'unsupported',
+      verified: artifact?.verified ?? false,
+      unsupported: !artifact,
+    };
+  });
+}
+
+/** Sentinel option value that reveals the free-text model id input. */
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+const CODE_LANGUAGES: { value: CodeLanguage; label: string }[] = [
+  { value: 'auto', label: 'Auto (let the model choose)' },
+  { value: 'python', label: 'Python' },
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'typescript', label: 'TypeScript' },
+  { value: 'java', label: 'Java' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'csharp', label: 'C#' },
+  { value: 'go', label: 'Go' },
+  { value: 'rust', label: 'Rust' },
+];
 
 @Component({
   selector: 'app-settings',
@@ -92,69 +163,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly parakeetStatus = signal<ParakeetStatus | null>(null);
   readonly parakeetDownloadProgress = signal<ParakeetDownloadProgress | null>(null);
   readonly isDownloadingParakeet = signal(false);
+  /** True when running on macOS — used to label the reveal button correctly. */
+  readonly isMacOS = typeof navigator !== 'undefined'
+    ? /mac/i.test(navigator.userAgent) && !/windows|linux/i.test(navigator.userAgent)
+    : false;
+  /** Tracks which model is currently being revealed in Finder/Explorer */
+  readonly parakeetRevealingModel = signal<ParakeetModelType | null>(null);
+  readonly isParakeetPaused = signal(false);
 
-  readonly parakeetModelsList: ParakeetModelCard[] = [
-    {
-      id: 'parakeet-flash',
-      name: 'Parakeet Flash',
-      subtitle: 'Ultra-low latency · English',
-      icon: '⚡',
-      description: 'Ultra-low latency streaming FastConformer optimized for instantaneous live meeting subtitles.',
-      ramRequirement: '~2 GB RAM',
-      fileSizeStr: '~1.0 GB',
-      badge: 'Ultra Low Latency',
-    },
-    {
-      id: 'parakeet-tdt-v2',
-      name: 'Parakeet TDT v2',
-      subtitle: 'Balanced · English',
-      icon: '⚖️',
-      description: 'Next-generation FastConformer Token-and-Duration Transducer v2 for high-speed, high-accuracy English transcription.',
-      ramRequirement: '~2.5 GB RAM',
-      fileSizeStr: '~1.2 GB',
-      badge: 'Balanced English',
-    },
-    {
-      id: 'parakeet-tdt-v3',
-      name: 'Parakeet TDT v3',
-      subtitle: 'Multilingual · 25 languages',
-      icon: '🌍',
-      description: 'NVIDIA multilingual FastConformer-TDT v3. Transcribes multilingual, code-switching, and global meeting dialogue across 25+ languages.',
-      ramRequirement: '~3 GB RAM',
-      fileSizeStr: '~1.4 GB',
-      badge: '25 Languages',
-    },
-    {
-      id: 'parakeet-ctc-1.1b',
-      name: 'Parakeet CTC 1.1B',
-      subtitle: 'Maximum accuracy · Technical',
-      icon: '🎯',
-      description: 'NVIDIA flagship heavyweight FastConformer. Highest accuracy and best technical domain vocabulary recall.',
-      ramRequirement: '~4 GB RAM',
-      fileSizeStr: '~2.2 GB',
-      badge: 'Flagship 1.1B',
-    },
-    {
-      id: 'nemotron-speech-3.5',
-      name: 'Nemotron Speech 3.5',
-      subtitle: 'Enterprise · Technical',
-      icon: '🏢',
-      description: 'NVIDIA NeMo Nemotron Speech 3.5. Enterprise-grade hybrid ASR with advanced punctuation and technical vocabulary grounding.',
-      ramRequirement: '~4.5 GB RAM',
-      fileSizeStr: '~1.4 GB',
-      badge: 'Enterprise ASR',
-    },
-    {
-      id: 'nemotron-3.5-multilingual',
-      name: 'Nemotron 3.5 Multilingual',
-      subtitle: 'Multilingual · Code-switching',
-      icon: '🌍',
-      description: 'NVIDIA Nemotron 3.5 Multilingual. State-of-the-art multilingual model supporting 25+ languages and seamless code-switching.',
-      ramRequirement: '~5 GB RAM',
-      fileSizeStr: '~1.6 GB',
-      badge: 'Multilingual',
-    },
-  ];
+  /** Platform key reported by the main process, used to resolve artifact sizes. */
+  readonly parakeetPlatform = signal<SttPlatform>(detectRendererPlatform());
+
+  readonly parakeetModelsList = computed<ParakeetModelCard[]>(() =>
+    buildParakeetCards(this.parakeetPlatform())
+  );
 
   // macOS Permissions
   readonly macosPermissions = signal<MacosPermissions | null>(null);
@@ -170,10 +192,34 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly autoGainControl = signal<boolean>(true);
 
   // LLM Signals
-  readonly llmProvider = signal<'anthropic' | 'local'>('local');
-  readonly llmModel = signal('claude-3-5-sonnet-20241022');
+  readonly llmProviders = signal<LlmProviderInfo[]>([]);
+  readonly llmProvider = signal<LlmProviderId>('deepseek');
+  readonly llmModel = signal('deepseek-flash');
+  readonly llmThinkingEnabled = signal(false);
+  readonly codeLanguage = signal<CodeLanguage>('auto');
+  readonly codeLanguages = CODE_LANGUAGES;
   readonly temperature = signal(0.3);
   readonly maxTokens = signal(500);
+
+  // Active LLM provider metadata + its model list (data-driven UI).
+  readonly activeLlmProvider = computed(() => {
+    const id = this.llmProvider();
+    return this.llmProviders().find((p) => p.id === id) ?? this.llmProviders()[0] ?? null;
+  });
+  readonly availableLlmModels = computed(() => this.activeLlmProvider()?.models ?? []);
+
+  // Custom model id entry (gateway providers such as OpenRouter).
+  readonly customModelValue = CUSTOM_MODEL_VALUE;
+  readonly customModelMode = signal(false);
+  readonly customLlmModel = signal('');
+  readonly selectLlmModel = computed(() => (this.customModelMode() ? CUSTOM_MODEL_VALUE : this.llmModel()));
+  readonly effectiveLlmModel = computed(() => {
+    const provider = this.activeLlmProvider();
+    if (this.customModelMode() && provider?.allowCustomModel) {
+      return this.customLlmModel().trim() || provider.defaultModel;
+    }
+    return this.llmModel();
+  });
 
   // Knowledge Base Signals (Milestone 7 / FR-44)
   readonly knowledgeDocs = signal<KnowledgeDoc[]>([]);
@@ -187,10 +233,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly isExportingSummary = signal(false);
   readonly latestSummary = signal<MeetingSummary | null>(null);
 
-  // API Key Form State
-  readonly anthropicKeyInput = signal('');
-  readonly hasAnthropicKey = signal(false);
-  readonly showAnthropicKey = signal(false);
+  // API Key Form State (per provider)
+  readonly apiKeyInputs = signal<Record<string, string>>({});
+  readonly hasApiKeys = signal<Partial<Record<LlmProviderId, boolean>>>({});
+  readonly showApiKeys = signal<Record<string, boolean>>({});
+  readonly apiKeyProviders = computed(() => this.llmProviders().filter((p) => p.requiresApiKey));
   readonly isEncryptionAvailable = signal(true);
   readonly isSaving = signal(false);
 
@@ -221,7 +268,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       };
     }
 
-    const meta = this.parakeetModelsList.find((m) => m.id === parakeetM) || this.parakeetModelsList[0];
+    const meta = this.parakeetModelsList().find((m) => m.id === parakeetM) || this.parakeetModelsList()[0];
     const isParakeetInstalled = installedParakeet.includes(meta.id);
     if (isParakeetInstalled) {
       return {
@@ -247,6 +294,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   });
 
   async ngOnInit(): Promise<void> {
+    await this.loadLlmProviders();
     await this.loadSettings();
     await this.loadSttEngines();
     await this.refreshParakeetStatus();
@@ -255,11 +303,21 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
     this.unsubscribeParakeetDownloadProgress = this.ipcService.onParakeetDownloadProgress((progress) => {
       this.parakeetDownloadProgress.set(progress);
-      if (progress.completed || progress.error) {
+      if (progress.paused) {
         this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(true);
+        this.showToast('Parakeet model download paused.', 'info');
+      } else if (progress.cancelled) {
+        this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(false);
+        this.parakeetDownloadProgress.set(null);
+        this.showToast('Parakeet model download cancelled.', 'info');
+      } else if (progress.completed || progress.error) {
+        this.isDownloadingParakeet.set(false);
+        this.isParakeetPaused.set(false);
         this.refreshParakeetStatus();
         if (progress.completed) {
-          const meta = this.parakeetModelsList.find((m) => m.id === progress.model);
+          const meta = this.parakeetModelsList().find((m) => m.id === progress.model);
           const name = meta ? meta.name : progress.model;
           this.showToast(`Parakeet model ${name} downloaded successfully!`, 'success');
         } else if (progress.error) {
@@ -313,13 +371,25 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (typeof settings.autoGainControl === 'boolean') this.autoGainControl.set(settings.autoGainControl);
 
     // LLM Configuration
-    this.llmProvider.set(settings.llmProvider || 'local');
-    this.llmModel.set(settings.llmModel || 'claude-3-5-sonnet-20241022');
+    const providerId = settings.llmProvider || 'deepseek';
+    const storedModel = settings.llmModel || 'deepseek-flash';
+    this.llmProvider.set(providerId);
+    this.llmModel.set(storedModel);
+    const providerEntry = this.llmProviders().find((p) => p.id === providerId);
+    if (providerEntry?.allowCustomModel && !providerEntry.models.some((m) => m.id === storedModel)) {
+      this.customModelMode.set(true);
+      this.customLlmModel.set(storedModel);
+    } else {
+      this.customModelMode.set(false);
+      this.customLlmModel.set('');
+    }
+    this.llmThinkingEnabled.set(Boolean(settings.llmThinkingEnabled));
+    this.codeLanguage.set(settings.codeLanguage || 'auto');
     this.temperature.set(typeof settings.temperature === 'number' ? settings.temperature : 0.3);
     this.maxTokens.set(settings.maxTokens || 500);
 
     // Key Statuses
-    this.hasAnthropicKey.set(Boolean(settings.hasAnthropicKey));
+    this.hasApiKeys.set(settings.hasApiKeys ?? {});
     this.isEncryptionAvailable.set(settings.isEncryptionAvailable !== false);
 
     // Overlay Dimensions & Transparency & Layout Mode
@@ -338,6 +408,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.sttEngines.set(engines);
     } catch (err) {
       console.warn('[SettingsComponent] Failed to load STT engines:', err);
+    }
+  }
+
+  async loadLlmProviders(): Promise<void> {
+    try {
+      const providers = await this.ipcService.getLlmProviders();
+      this.llmProviders.set(providers);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to load LLM providers:', err);
     }
   }
 
@@ -394,41 +473,83 @@ export class SettingsComponent implements OnInit, OnDestroy {
     try {
       const status = await this.ipcService.getParakeetStatus();
       this.parakeetStatus.set(status);
+      const platform = this.toSttPlatform(status.platform);
+      if (platform) this.parakeetPlatform.set(platform);
     } catch (err) {
       console.warn('[SettingsComponent] Failed to get Parakeet status:', err);
+    }
+  }
+
+  private toSttPlatform(value?: string): SttPlatform | null {
+    switch (value) {
+      case 'darwin-arm64':
+      case 'darwin-x64':
+      case 'win32-x64':
+      case 'win32-ia32':
+        return value;
+      default:
+        return null;
     }
   }
 
   async downloadParakeetModel(modelId: ParakeetModelType): Promise<void> {
     if (this.isDownloadingParakeet()) return;
 
-    const meta = this.parakeetModelsList.find((m) => m.id === modelId) || this.parakeetModelsList[0];
-    const totalMb = modelId === 'parakeet-ctc-1.1b'
-      ? 2200
-      : modelId === 'nemotron-3.5-multilingual'
-        ? 1600
-        : modelId === 'nemotron-speech-3.5' || modelId === 'parakeet-tdt-v3'
-          ? 1400
-          : modelId === 'parakeet-tdt-v2'
-            ? 1200
-            : 1000;
+    const meta = this.parakeetModelsList().find((m) => m.id === modelId) || this.parakeetModelsList()[0];
+    const artifact = STT_MODEL_CATALOG.find((entry) => entry.id === modelId)?.artifacts[
+      this.parakeetPlatform()
+    ];
+    const totalMb = artifact ? Math.round(artifactTotalBytes(artifact) / (1024 * 1024)) : 0;
+
+    const wasPaused = this.isParakeetPaused() && this.parakeetDownloadProgress()?.model === modelId;
+    const currentProgress = this.parakeetDownloadProgress();
 
     this.isDownloadingParakeet.set(true);
-    this.parakeetDownloadProgress.set({
-      model: modelId,
-      percent: 0,
-      downloadedMb: 0,
-      totalMb,
-      completed: false,
-    });
+    this.isParakeetPaused.set(false);
+
+    if (!wasPaused || !currentProgress) {
+      this.parakeetDownloadProgress.set({
+        model: modelId,
+        percent: 0,
+        downloadedMb: 0,
+        totalMb,
+        completed: false,
+      });
+    }
 
     try {
-      this.showToast(`Starting download for ${meta.name} (${meta.fileSizeStr})...`, 'info');
+      this.showToast(
+        wasPaused
+          ? `Resuming download for ${meta.name}...`
+          : `Starting download for ${meta.name} (${meta.fileSizeStr})...`,
+        'info'
+      );
       await this.ipcService.downloadParakeetModel(modelId);
     } catch (err: unknown) {
       this.isDownloadingParakeet.set(false);
       const msg = err instanceof Error ? err.message : String(err);
       this.showToast(`Failed downloading Parakeet model: ${msg}`, 'info');
+    }
+  }
+
+  async pauseParakeetDownload(): Promise<void> {
+    try {
+      await this.ipcService.pauseParakeetDownload();
+      this.isDownloadingParakeet.set(false);
+      this.isParakeetPaused.set(true);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to pause download:', err);
+    }
+  }
+
+  async cancelParakeetDownload(): Promise<void> {
+    try {
+      await this.ipcService.cancelParakeetDownload();
+      this.isDownloadingParakeet.set(false);
+      this.isParakeetPaused.set(false);
+      this.parakeetDownloadProgress.set(null);
+    } catch (err) {
+      console.warn('[SettingsComponent] Failed to cancel download:', err);
     }
   }
 
@@ -443,6 +564,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
       }
     } catch {
       this.showToast('Failed to delete Parakeet model.', 'info');
+    }
+  }
+
+  async revealParakeetModel(modelId: ParakeetModelType): Promise<void> {
+    this.parakeetRevealingModel.set(modelId);
+    try {
+      const ok = await this.ipcService.revealParakeetModel(modelId);
+      if (!ok) {
+        this.showToast('Model file not found. It may have been moved or deleted.', 'info');
+      }
+    } catch {
+      this.showToast('Failed to open file location.', 'info');
+    } finally {
+      this.parakeetRevealingModel.set(null);
     }
   }
 
@@ -540,12 +675,36 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   onLlmProviderChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
-    this.llmProvider.set(target.value as 'anthropic' | 'local');
+    const id = target.value as LlmProviderId;
+    this.llmProvider.set(id);
+    const entry = this.llmProviders().find((p) => p.id === id);
+    if (entry) {
+      this.llmModel.set(entry.defaultModel);
+    }
+    this.customModelMode.set(false);
+    this.customLlmModel.set('');
   }
 
   onLlmModelChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
+    if (target.value === CUSTOM_MODEL_VALUE) {
+      this.customModelMode.set(true);
+      return;
+    }
+    this.customModelMode.set(false);
     this.llmModel.set(target.value);
+  }
+
+  onCustomLlmModelChange(event: Event): void {
+    this.customLlmModel.set((event.target as HTMLInputElement).value);
+  }
+
+  onLlmThinkingChange(event: Event): void {
+    this.llmThinkingEnabled.set((event.target as HTMLInputElement).checked);
+  }
+
+  onCodeLanguageChange(event: Event): void {
+    this.codeLanguage.set((event.target as HTMLSelectElement).value as CodeLanguage);
   }
 
   onTemperatureChange(event: Event): void {
@@ -558,9 +717,25 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.maxTokens.set(parseInt(target.value, 10) || 500);
   }
 
-  onAnthropicKeyChange(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    this.anthropicKeyInput.set(target.value);
+  onApiKeyChange(providerId: LlmProviderId, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.apiKeyInputs.update((inputs) => ({ ...inputs, [providerId]: value }));
+  }
+
+  toggleApiKeyVisibility(providerId: LlmProviderId): void {
+    this.showApiKeys.update((state) => ({ ...state, [providerId]: !state[providerId] }));
+  }
+
+  hasKey(providerId: LlmProviderId): boolean {
+    return Boolean(this.hasApiKeys()[providerId]);
+  }
+
+  apiKeyValue(providerId: LlmProviderId): string {
+    return this.apiKeyInputs()[providerId] ?? '';
+  }
+
+  isApiKeyVisible(providerId: LlmProviderId): boolean {
+    return Boolean(this.showApiKeys()[providerId]);
   }
 
   onOverlayWidthChange(event: Event): void {
@@ -656,7 +831,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
       meetingAudioDeviceId: this.meetingAudioDeviceId() || undefined,
       micAudioDeviceId: this.micAudioDeviceId() || undefined,
       llmProvider: this.llmProvider(),
-      llmModel: this.llmModel(),
+      llmModel: this.effectiveLlmModel(),
+      llmThinkingEnabled: this.llmThinkingEnabled(),
+      codeLanguage: this.codeLanguage(),
       temperature: this.temperature(),
       maxTokens: this.maxTokens(),
       overlayWidth: this.overlayWidth(),
@@ -680,14 +857,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
     };
 
-    if (this.anthropicKeyInput().trim().length > 0) {
-      payload.anthropicApiKey = this.anthropicKeyInput().trim();
+    const apiKeys: Record<string, string> = {};
+    for (const [providerId, value] of Object.entries(this.apiKeyInputs())) {
+      if (value.trim().length > 0) {
+        apiKeys[providerId] = value.trim();
+      }
+    }
+    if (Object.keys(apiKeys).length > 0) {
+      payload.apiKeys = apiKeys;
     }
 
     try {
       const updated = await this.ipcService.setSettings(payload);
-      this.hasAnthropicKey.set(Boolean(updated.hasAnthropicKey));
-      this.anthropicKeyInput.set('');
+      this.hasApiKeys.set(updated.hasApiKeys ?? {});
+      this.apiKeyInputs.set({});
       this.showToast('Settings, audio routing, and context profile saved successfully!', 'success');
     } catch {
       this.showToast('Failed to save settings.', 'info');
@@ -715,8 +898,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.noiseSuppression.set(true);
     this.echoCancellation.set(true);
     this.autoGainControl.set(true);
-    this.llmProvider.set('local');
-    this.llmModel.set('claude-3-5-sonnet-20241022');
+    this.llmProvider.set('deepseek');
+    this.llmModel.set('deepseek-flash');
+    this.customModelMode.set(false);
+    this.customLlmModel.set('');
+    this.llmThinkingEnabled.set(false);
+    this.codeLanguage.set('auto');
     this.temperature.set(0.3);
     this.maxTokens.set(500);
     this.overlayWidth.set(380);

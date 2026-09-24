@@ -15,6 +15,26 @@
       "request": "launch",
       "preLaunchTask": "npm: test",
       "url": "http://localhost:9876/debug.html"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:MeetVision-AI}/electron/native/parakeet-coreml",
+      "name": "Debug parakeet-coreml (electron/native/parakeet-coreml)",
+      "target": "parakeet-coreml",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug parakeet-coreml (electron/native/parakeet-coreml)"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:MeetVision-AI}/electron/native/parakeet-coreml",
+      "name": "Release parakeet-coreml (electron/native/parakeet-coreml)",
+      "target": "parakeet-coreml",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release parakeet-coreml (electron/native/parakeet-coreml)"
     }
   ]
 }

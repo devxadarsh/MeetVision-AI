@@ -15,6 +15,7 @@ import {
   ParakeetStatus,
   ParakeetModelType,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
 } from '@shared/ipc';
 
 const api: ElectronAPI = {
@@ -158,6 +159,15 @@ const api: ElectronAPI = {
   deleteParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_DELETE, modelId);
   },
+  revealParakeetModel: (modelId: ParakeetModelType): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_REVEAL, modelId);
+  },
+  pauseParakeetDownload: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_PAUSE);
+  },
+  cancelParakeetDownload: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.PARAKEET_MODEL_CANCEL);
+  },
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, progress: ParakeetDownloadProgress) => {
       callback(progress);
@@ -170,6 +180,10 @@ const api: ElectronAPI = {
   // Pluggable STT Engines
   getSttEngines: (): Promise<STTEngineInfo[]> => {
     return ipcRenderer.invoke(IPC_CHANNELS.STT_ENGINES_GET);
+  },
+  // Pluggable LLM Providers
+  getLlmProviders: (): Promise<LlmProviderInfo[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDERS_GET);
   },
   // macOS Permissions
   getMacosPermissions: (): Promise<MacosPermissions> => {
@@ -210,7 +224,7 @@ const api: ElectronAPI = {
   getSettings: (): Promise<AppSettings> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET);
   },
-  setSettings: (settings: AppSettings): Promise<AppSettings> => {
+  setSettings: (settings: Partial<AppSettings>): Promise<AppSettings> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, settings);
   },
   openSettings: (): Promise<boolean> => {

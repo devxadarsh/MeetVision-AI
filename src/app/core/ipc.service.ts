@@ -17,7 +17,10 @@ import {
   ParakeetStatus,
   ParakeetModelType,
   ParakeetDownloadProgress,
+  LlmProviderInfo,
+  AnswerQuestionPayload,
 } from '@shared/ipc';
+import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 
 @Injectable({
   providedIn: 'root',
@@ -30,11 +33,15 @@ export class IpcService {
   private mockSettings: AppSettings = {
     sttProvider: 'parakeet',
     parakeetModel: 'parakeet-flash',
-    llmProvider: 'local',
-    llmModel: 'claude-3-5-sonnet-20241022',
+    llmProvider: 'deepseek',
+    llmModel: 'deepseek-flash',
+    llmThinkingEnabled: false,
+    answerMode: 'short',
+    codeLanguage: 'auto',
     temperature: 0.3,
     maxTokens: 500,
     overlayOpacity: 0.88,
+    hasApiKeys: { deepseek: false, openrouter: false, anthropic: false, local: true },
     hasAnthropicKey: false,
     isEncryptionAvailable: false,
     profile: {
@@ -253,6 +260,21 @@ export class IpcService {
     return this.api.deleteParakeetModel(modelId);
   }
 
+  async revealParakeetModel(modelId: ParakeetModelType): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.revealParakeetModel(modelId);
+  }
+
+  async pauseParakeetDownload(): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.pauseParakeetDownload();
+  }
+
+  async cancelParakeetDownload(): Promise<boolean> {
+    if (!this.api) return false;
+    return this.api.cancelParakeetDownload();
+  }
+
   onParakeetDownloadProgress(callback: (progress: ParakeetDownloadProgress) => void): (() => void) {
     if (!this.api) return () => {};
     return this.api.onParakeetDownloadProgress(callback);
@@ -281,6 +303,14 @@ export class IpcService {
       ];
     }
     return this.api.getSttEngines();
+  }
+
+  // Pluggable LLM Providers
+  async getLlmProviders(): Promise<LlmProviderInfo[]> {
+    if (!this.api) {
+      return LLM_PROVIDERS.map((p) => ({ ...p }));
+    }
+    return this.api.getLlmProviders();
   }
 
   // macOS Permissions
@@ -312,7 +342,7 @@ export class IpcService {
     return this.api.regenerateAnswer(payload);
   }
 
-  async answerQuestion(payload?: string | { questionId?: string; text?: string; speaker?: string }): Promise<boolean> {
+  async answerQuestion(payload?: string | AnswerQuestionPayload): Promise<boolean> {
     if (!this.api) return true;
     return this.api.answerQuestion(payload);
   }
@@ -330,7 +360,7 @@ export class IpcService {
     return this.api.getSettings();
   }
 
-  async setSettings(settings: AppSettings): Promise<AppSettings> {
+  async setSettings(settings: Partial<AppSettings>): Promise<AppSettings> {
     if (!this.api) {
       this.mockSettings = { ...this.mockSettings, ...settings };
       for (const listener of this.mockSettingsListeners) {

@@ -7,12 +7,27 @@ import {
   ParakeetStatus,
   ParakeetDownloadProgress,
 } from '@shared/ipc';
+import {
+  STT_MODEL_CATALOG,
+  artifactFileUrl,
+  artifactTotalBytes,
+  getCatalogEntry,
+  getModelArtifact,
+  isParakeetModelType,
+  resolveSttPlatform,
+} from '@shared/stt-model-catalog';
+import type { SttModelArtifact, SttPlatform } from '@shared/stt-model-catalog';
 import { ISTTEngine, STTEngineOptions } from './stt-engine.interface';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync, execFile } from 'child_process';
+import * as https from 'https';
+import * as http from 'http';
 import { app } from 'electron';
+import type { SttRuntime } from './runtimes/stt-runtime.interface';
+import { CoreMlRuntime } from './runtimes/coreml-runtime';
+import { GgmlRuntime } from './runtimes/ggml-runtime';
+import { SherpaOnnxRuntime } from './runtimes/sherpa-onnx-runtime';
 
 function encodeWav(samples: Int16Array, sampleRate = 16000): Buffer {
   const dataByteLength = samples.length * 2;
@@ -57,80 +72,61 @@ export interface ParakeetModelMeta {
   fileSizeMb: number;
 }
 
-export const PARAKEET_MODELS: ParakeetModelMeta[] = [
-  {
-    id: 'parakeet-flash',
-    name: 'Parakeet Flash',
-    subtitle: 'Ultra-low latency · English',
-    icon: '⚡',
-    description: 'Ultra-low latency streaming FastConformer optimized for instantaneous live meeting subtitles.',
-    architecture: 'FastConformer-Flash',
-    parameters: '600M',
-    speed: '~28x Real-Time (Ultra Low Latency)',
-    ramRequirement: '~2 GB RAM',
-    fileSizeMb: 1000,
-  },
-  {
-    id: 'parakeet-tdt-v2',
-    name: 'Parakeet TDT v2',
-    subtitle: 'Balanced · English',
-    icon: '⚖️',
-    description: 'Next-generation FastConformer Token-and-Duration Transducer v2 for high-speed, high-accuracy English transcription.',
-    architecture: 'FastConformer-TDT-v2',
-    parameters: '600M',
-    speed: '~25x Real-Time (Fast English)',
-    ramRequirement: '~2.5 GB RAM',
-    fileSizeMb: 1200,
-  },
-  {
-    id: 'parakeet-tdt-v3',
-    name: 'Parakeet TDT v3',
-    subtitle: 'Multilingual · 25 languages',
-    icon: '🌍',
-    description: 'NVIDIA multilingual FastConformer-TDT v3. Transcribes multilingual, code-switching, and global meeting dialogue across 25+ languages.',
-    architecture: 'FastConformer-TDT-v3',
-    parameters: '600M',
-    speed: '~18x Real-Time (Multilingual)',
-    ramRequirement: '~3 GB RAM',
-    fileSizeMb: 1400,
-  },
-  {
-    id: 'parakeet-ctc-1.1b',
-    name: 'Parakeet CTC 1.1B',
-    subtitle: 'Maximum accuracy · Technical',
-    icon: '🎯',
-    description: 'NVIDIA flagship heavyweight FastConformer. Highest accuracy and best technical domain vocabulary recall.',
-    architecture: 'FastConformer-CTC',
-    parameters: '1.1 Billion',
-    speed: '~12x Real-Time (Highest Accuracy)',
-    ramRequirement: '~4 GB RAM',
-    fileSizeMb: 2200,
-  },
-  {
-    id: 'nemotron-speech-3.5',
-    name: 'Nemotron Speech 3.5',
-    subtitle: 'Enterprise · Technical',
-    icon: '🏢',
-    description: 'NVIDIA NeMo Nemotron Speech 3.5. Enterprise-grade hybrid ASR with advanced punctuation and technical vocabulary grounding.',
-    architecture: 'Nemotron-Speech-3.5',
-    parameters: '800M',
-    speed: '~22x Real-Time (Enterprise)',
-    ramRequirement: '~4.5 GB RAM',
-    fileSizeMb: 1400,
-  },
-  {
-    id: 'nemotron-3.5-multilingual',
-    name: 'Nemotron 3.5 Multilingual',
-    subtitle: 'Multilingual · Code-switching',
-    icon: '🌍',
-    description: 'NVIDIA Nemotron 3.5 Multilingual. State-of-the-art multilingual model supporting 25+ languages and seamless code-switching.',
-    architecture: 'Nemotron-3.5-Multilingual',
-    parameters: '1.0 Billion',
-    speed: '~16x Real-Time (25+ Languages)',
-    ramRequirement: '~5 GB RAM',
-    fileSizeMb: 1600,
-  },
-];
+function currentPlatform(): SttPlatform | null {
+  return resolveSttPlatform(process.platform, process.arch);
+}
+
+/**
+ * UI-facing model metadata. Sizes are derived from the artifact resolved for
+ * the host platform, so they no longer drift from what is actually downloaded.
+ */
+export const PARAKEET_MODELS: ParakeetModelMeta[] = STT_MODEL_CATALOG.map((entry) => {
+  const platform = currentPlatform();
+  const artifact = platform ? entry.artifacts[platform] : undefined;
+  return {
+    id: entry.id,
+    name: entry.name,
+    subtitle: entry.subtitle,
+    icon: entry.icon,
+    description: entry.description,
+    architecture: entry.architecture,
+    parameters: entry.parameters,
+    speed: entry.speed,
+    ramRequirement: entry.ramRequirement,
+    fileSizeMb: artifact ? Math.round(artifactTotalBytes(artifact) / (1024 * 1024)) : 0,
+  };
+});
+
+const DOWNLOAD_TIMEOUT_MS = 30000;
+/**
+ * Per-utterance timeout. A warm helper run completes in well under a second, but
+ * the very first call for a model compiles its Core ML graphs and pulls several
+ * hundred MB through the caches — measured at ~32 s on an M-series Mac. A short
+ * timeout kills that process before it can print anything, which surfaces as
+ * "Command failed" with empty stderr. `warmUpRuntime()` normally pays that cost
+ * at start-up so real utterances stay on the fast path.
+ */
+const INFERENCE_TIMEOUT_MS = 120000;
+/** Warm-up is a deliberate cold load, so it gets a longer budget. */
+const WARMUP_TIMEOUT_MS = 180000;
+
+/**
+ * FluidAudio rejects audio shorter than ASRConstants.minimumAudioDurationSeconds
+ * (0.3 s at 16 kHz) with `invalidAudioData`. Shorter utterances are padded up to
+ * this length with silence so brief words ("yes", "no") are not dropped. The
+ * margin above 0.3 s absorbs any resampling rounding inside FluidAudio.
+ */
+const MIN_INFERENCE_SAMPLES = Math.round(16000 * 0.35);
+/** Utterances shorter than this are transient blips, not speech. */
+const MIN_USEFUL_SAMPLES = Math.round(16000 * 0.3);
+/**
+ * How often to re-decode the in-progress utterance so the transcript updates
+ * live while the speaker is still talking. Skipped entirely while an inference
+ * is already running, so the effective cadence tracks model speed.
+ */
+const INTERIM_DECODE_INTERVAL_MS = 700;
+/** Do not start an interim decode until at least this much new speech accumulated. */
+const INTERIM_MIN_SAMPLES = Math.round(16000 * 0.6);
 
 export class ParakeetEngine implements ISTTEngine {
   readonly id: STTEngineType = 'parakeet';
@@ -140,14 +136,27 @@ export class ParakeetEngine implements ISTTEngine {
   private active = false;
   private onSegmentCallback: ((segment: TranscriptSegment) => void) | null = null;
   private currentModel: ParakeetModelType = 'parakeet-flash';
-  private binaryPath: string | null = null;
-  private modelDir: string | null = null;
   private modelsDir: string;
   private isDownloading = false;
   private downloadingModel?: ParakeetModelType;
   private downloadProgress = 0;
+  /** Controls how an in-flight request abort should be interpreted. */
+  private downloadIntent: 'downloading' | 'pausing' | 'cancelling' = 'downloading';
+  /** The active ClientRequest — set during download so pause/cancel can destroy it. */
+  private activeRequest: import('http').ClientRequest | null = null;
   public onProgressCallback?: (progress: ParakeetDownloadProgress) => void;
   private audioBuffer: { [channel: string]: Int16Array[] } = { system: [], mic: [] };
+
+  private readonly coreMlRuntime = new CoreMlRuntime();
+  private readonly sherpaRuntime = new SherpaOnnxRuntime();
+  private readonly ggmlRuntime = new GgmlRuntime();
+
+  /**
+   * Serializes inference calls. Each helper invocation loads several hundred MB
+   * of Core ML weights, so running the mic and system tracks concurrently would
+   * double peak memory and contend for the Neural Engine.
+   */
+  private inferenceQueue: Promise<void> = Promise.resolve();
 
   // Real-time audio utterance tracking for Metal GPU inference
   private utteranceTrackers = {
@@ -158,6 +167,8 @@ export class ParakeetEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -168,6 +179,8 @@ export class ParakeetEngine implements ISTTEngine {
       chunks: [] as Int16Array[],
       totalSamples: 0,
       silenceTimer: null as NodeJS.Timeout | null,
+      interimTimer: null as NodeJS.Timeout | null,
+      lastInterimSamples: 0,
       lastInterimMs: 0,
       isBusy: false,
     },
@@ -186,122 +199,148 @@ export class ParakeetEngine implements ISTTEngine {
         // ignore
       }
     }
-    this.detectBinary();
-    this.detectModelDir();
-  }
-
-  private detectBinary(): void {
-    const candidates = [
-      '/opt/homebrew/bin/parakeet-cli',
-      '/usr/local/bin/parakeet-cli',
-      '/opt/homebrew/opt/whisper.cpp/bin/parakeet-cli',
-      '/opt/homebrew/bin/sherpa-onnx-offline',
-      '/usr/local/bin/sherpa-onnx-offline',
-    ];
-
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        this.binaryPath = candidate;
-        return;
-      }
-    }
-
-    try {
-      const found = execSync('which parakeet-cli || which sherpa-onnx-offline', { encoding: 'utf-8' }).trim();
-      if (found && fs.existsSync(found)) {
-        this.binaryPath = found;
-      }
-    } catch {
-      this.binaryPath = null;
-    }
-  }
-
-  private getActiveModelPath(): string | null {
-    const candidates = [
-      path.join(this.modelsDir, `${this.currentModel}.bin`),
-      path.join(this.modelsDir, `ggml-${this.currentModel}.bin`),
-      path.join(process.cwd(), 'models', 'parakeet', `${this.currentModel}.bin`),
-    ];
-
-    for (const c of candidates) {
-      if (fs.existsSync(c) && fs.statSync(c).size > 1024 * 1024) {
-        return c;
-      }
-    }
-
-    // Fallback to any real GGML model in modelsDir > 10 MB (e.g. parakeet-tdt-v3.bin)
-    if (fs.existsSync(this.modelsDir)) {
+    if (!fs.existsSync(this.modelsDir)) {
+      this.modelsDir = path.join(process.cwd(), 'models', 'parakeet');
       try {
-        const files = fs.readdirSync(this.modelsDir);
-        for (const file of files) {
-          if (file.endsWith('.bin')) {
-            const p = path.join(this.modelsDir, file);
-            if (fs.statSync(p).size > 10 * 1024 * 1024) {
-              return p;
-            }
-          }
+        fs.mkdirSync(this.modelsDir, { recursive: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** Runtime that would serve the given model id on this platform. */
+  private runtimeForArtifact(artifact: SttModelArtifact): SttRuntime {
+    switch (artifact.runtime) {
+      case 'coreml':
+        return this.coreMlRuntime;
+      case 'sherpa-onnx':
+        return this.sherpaRuntime;
+      default:
+        return this.ggmlRuntime;
+    }
+  }
+
+  private resolveArtifact(modelId: ParakeetModelType = this.currentModel): SttModelArtifact | null {
+    const platform = currentPlatform();
+    if (!platform) return null;
+    return getModelArtifact(modelId, platform) ?? null;
+  }
+
+  /**
+   * The runtime that will actually serve the current model. When the platform
+   * runtime (Core ML / sherpa-onnx) is missing but legacy ggml weights and the
+   * ggml binary are present, inference falls back to ggml instead of failing.
+   */
+  private resolveEffectiveRuntime(): {
+    artifact: SttModelArtifact | null;
+    runtime: SttRuntime;
+    usingLegacy: boolean;
+    legacyFile: string | null;
+  } {
+    const artifact = this.resolveArtifact();
+    const preferred = artifact ? this.runtimeForArtifact(artifact) : this.ggmlRuntime;
+    const legacyFile = this.legacyModelFile(this.currentModel);
+
+    if (!preferred.isAvailable() && this.ggmlRuntime.isAvailable() && legacyFile) {
+      return { artifact, runtime: this.ggmlRuntime, usingLegacy: true, legacyFile };
+    }
+    return { artifact, runtime: preferred, usingLegacy: false, legacyFile };
+  }
+
+  /** Absolute directory holding the artifact files for a model. */
+  private modelDirFor(modelId: ParakeetModelType): string {
+    return path.join(this.modelsDir, modelId);
+  }
+
+  /** Legacy single-file GGML weights, kept for back-compat with old installs. */
+  private legacyModelFile(modelId: ParakeetModelType): string | null {
+    const candidates = [
+      path.join(this.modelsDir, `${modelId}.bin`),
+      path.join(this.modelsDir, `ggml-${modelId}.bin`),
+      path.join(process.cwd(), 'models', 'parakeet', `${modelId}.bin`),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).size > 1024 * 1024) {
+          return candidate;
         }
       } catch {
         // ignore
       }
     }
-
     return null;
   }
 
-  private detectModelDir(): void {
-    const possibleDirs = [
-      this.modelsDir,
-      path.join(process.cwd(), 'models', 'parakeet'),
-      path.join(process.cwd(), 'models'),
-    ];
-
-    for (const dir of possibleDirs) {
-      if (fs.existsSync(dir)) {
-        this.modelDir = dir;
-        return;
+  /** True when every required file for the model exists on disk. */
+  private isArtifactInstalled(modelId: ParakeetModelType, artifact: SttModelArtifact): boolean {
+    const dir = this.modelDirFor(modelId);
+    if (!fs.existsSync(dir)) return false;
+    for (const file of artifact.files) {
+      const target = path.join(dir, file.path);
+      try {
+        if (!fs.existsSync(target)) return false;
+        // Nested Core ML metadata files are legitimately tiny; only the sentinel must be non-empty.
+        if (file.path === artifact.sentinel && fs.statSync(target).size < 1024) return false;
+      } catch {
+        return false;
       }
     }
+    return true;
   }
 
   listInstalledModels(): ParakeetModelType[] {
-    const installed = new Set<ParakeetModelType>();
-    const searchDirs = [this.modelsDir, path.join(process.cwd(), 'models', 'parakeet')];
-
-    for (const dir of searchDirs) {
-      if (!fs.existsSync(dir)) continue;
-      try {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-          for (const model of PARAKEET_MODELS) {
-            if (file.startsWith(model.id)) {
-              const fullPath = path.join(dir, file);
-              try {
-                if (fs.existsSync(fullPath) && fs.statSync(fullPath).size > 1024 * 1024) {
-                  installed.add(model.id);
-                }
-              } catch {}
-            }
-          }
-        }
-      } catch {
-        // ignore
+    const installed: ParakeetModelType[] = [];
+    for (const entry of STT_MODEL_CATALOG) {
+      const artifact = this.resolveArtifact(entry.id);
+      if (artifact && this.isArtifactInstalled(entry.id, artifact)) {
+        installed.push(entry.id);
+        continue;
+      }
+      // Legacy GGML single-file install
+      if (this.legacyModelFile(entry.id)) {
+        installed.push(entry.id);
       }
     }
-    return Array.from(installed);
+    return installed;
   }
 
   getParakeetStatus(): ParakeetStatus {
-    this.detectBinary();
+    const platform = currentPlatform();
+    const { artifact, runtime, usingLegacy } = this.resolveEffectiveRuntime();
+    const runtimeBinary = runtime.resolveBinary();
+    const runtimeAvailable = runtime.isAvailable();
     const installed = this.listInstalledModels();
+
+    let runtimeDetail: string;
+    if (!platform) {
+      runtimeDetail = `Unsupported platform ${process.platform}/${process.arch}.`;
+    } else if (!artifact) {
+      runtimeDetail = `No artifact is mapped for ${this.currentModel} on ${platform}.`;
+    } else if (!runtimeAvailable) {
+      runtimeDetail = `${runtime.displayName} is not installed, so ${artifact.runtime} weights cannot run yet.`;
+    } else if (usingLegacy) {
+      runtimeDetail = `${runtime.displayName} fallback is active. Run "npm run build:native" for ${artifact.runtime} acceleration.`;
+    } else {
+      runtimeDetail = `Running ${runtime.displayName} with ${artifact.repo}.`;
+    }
+
     return {
-      available: Boolean(this.binaryPath),
-      binaryPath: this.binaryPath || undefined,
+      available: runtimeAvailable,
+      binaryPath: runtimeBinary || undefined,
       installedModels: installed,
       currentModel: this.currentModel,
       isDownloading: this.isDownloading,
       downloadProgress: this.downloadProgress,
       downloadingModel: this.downloadingModel,
+      platform: platform ?? `${process.platform}-${process.arch}`,
+      runtime: usingLegacy ? runtime.kind : artifact?.runtime ?? runtime.kind,
+      runtimeName: runtime.displayName,
+      runtimeAvailable,
+      runtimeDetail,
+      currentModelInstalled: installed.includes(this.currentModel),
+      currentModelBytes: artifact ? artifactTotalBytes(artifact) : 0,
+      currentModelNotes: artifact?.notes,
     };
   }
 
@@ -313,115 +352,445 @@ export class ParakeetEngine implements ISTTEngine {
       throw new Error('Another Parakeet model download is already in progress');
     }
 
-    const meta = PARAKEET_MODELS.find((m) => m.id === modelId);
-    if (!meta) {
+    const entry = getCatalogEntry(modelId);
+    if (!entry) {
       throw new Error(`Unknown Parakeet model: ${modelId}`);
     }
 
-    if (!fs.existsSync(this.modelsDir)) {
-      try {
-        fs.mkdirSync(this.modelsDir, { recursive: true });
-      } catch (err) {
-        console.warn('[ParakeetEngine] Failed to create directory:', err);
-      }
+    const artifact = this.resolveArtifact(modelId);
+    if (!artifact) {
+      throw new Error(
+        `No downloadable artifact is mapped for ${entry.name} on ${process.platform}/${process.arch}.`
+      );
+    }
+
+    const modelDir = this.modelDirFor(modelId);
+    if (!fs.existsSync(modelDir)) {
+      fs.mkdirSync(modelDir, { recursive: true });
     }
 
     this.isDownloading = true;
     this.downloadingModel = modelId;
     this.downloadProgress = 0;
+    this.downloadIntent = 'downloading';
 
-    const totalMb = meta.fileSizeMb;
-    const targetFile = path.join(this.modelsDir, `${modelId}.bin`);
+    const totalBytes = artifactTotalBytes(artifact) || 1;
+    const totalMb = Math.round(totalBytes / (1024 * 1024));
+    let receivedBytes = 0;
 
-    // Find any existing working model (> 10MB) to copy from as the base weights
-    let sourceWeights: string | null = null;
+    const emitProgress = (
+      bytes: number,
+      completed: boolean,
+      error?: string,
+      paused?: boolean,
+      cancelled?: boolean
+    ) => {
+      const percent = Math.min(100, Math.round((bytes / totalBytes) * 100));
+      const progress: ParakeetDownloadProgress = {
+        model: modelId,
+        percent: completed ? 100 : percent,
+        downloadedMb: Math.round(bytes / (1024 * 1024)),
+        totalMb,
+        completed,
+        error,
+        paused,
+        cancelled,
+      };
+      onProgress?.(progress);
+      this.onProgressCallback?.(progress);
+      this.downloadProgress = progress.percent;
+    };
+
+    const cleanup = (err?: Error) => {
+      this.activeRequest = null;
+      if (this.downloadIntent === 'pausing') {
+        this.isDownloading = false;
+        this.downloadingModel = undefined;
+        console.log(`[ParakeetEngine] Download of ${modelId} paused.`);
+        emitProgress(receivedBytes, false, undefined, true, false);
+        return;
+      }
+      if (this.downloadIntent === 'cancelling') {
+        this.isDownloading = false;
+        this.downloadingModel = undefined;
+        this.downloadProgress = 0;
+        this.discardPartialDownloads(modelDir);
+        console.log(`[ParakeetEngine] Download of ${modelId} cancelled.`);
+        emitProgress(0, false, undefined, false, true);
+        return;
+      }
+      this.isDownloading = false;
+      this.downloadingModel = undefined;
+      if (err) {
+        console.error('[ParakeetEngine] Download error:', err.message);
+        emitProgress(receivedBytes, false, err.message);
+      }
+    };
+
     try {
-      const files = fs.readdirSync(this.modelsDir);
-      for (const f of files) {
-        const p = path.join(this.modelsDir, f);
-        if (f.endsWith('.bin') && fs.statSync(p).size > 10 * 1024 * 1024) {
-          sourceWeights = p;
-          break;
+      for (const file of artifact.files) {
+        if (this.downloadIntent !== 'downloading') break;
+        const target = path.join(modelDir, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+
+        // A file that is already complete (or marked in the manifest) is skipped.
+        // A target file only ever appears after its `.part` is fully written and
+        // renamed, so any non-empty target is complete. The size comparison is a
+        // guard against truncated leftovers from older builds, and is only
+        // meaningful for large files: declared sizes for small files are rounded
+        // to 2 dp of a megabyte and can overstate the real size.
+        const existing = this.fileSizeSafe(target);
+        const isComplete =
+          existing > 0 && (file.bytes < 1e6 || existing >= file.bytes * 0.99);
+        if (isComplete) {
+          receivedBytes += existing;
+          emitProgress(receivedBytes, false);
+          continue;
+        }
+
+        const downloaded = await this.downloadFile(artifact, file.path, target, totalBytes, () => receivedBytes, (v) => {
+          receivedBytes = v;
+          emitProgress(receivedBytes, false);
+        });
+        if (downloaded === null) {
+          // Aborted by pause/cancel.
+          cleanup();
+          return false;
+        }
+        receivedBytes += downloaded;
+        emitProgress(receivedBytes, false);
+      }
+
+      if (this.downloadIntent !== 'downloading') {
+        cleanup();
+        return false;
+      }
+
+      this.activeRequest = null;
+      this.isDownloading = false;
+      this.downloadingModel = undefined;
+      this.downloadProgress = 100;
+      emitProgress(totalBytes, true);
+      console.log(`[ParakeetEngine] ${artifact.repo} installed to ${modelDir}`);
+      return true;
+    } catch (err) {
+      cleanup(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
+  }
+
+  private fileSizeSafe(filePath: string): number {
+    try {
+      return fs.statSync(filePath).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  private discardPartialDownloads(dir: string): void {
+    const walk = (current: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith('.part')) {
+          try {
+            fs.unlinkSync(full);
+          } catch {
+            // ignore
+          }
         }
       }
-    } catch {}
+    };
+    walk(dir);
+  }
 
-    return new Promise<boolean>((resolve) => {
-      let percent = 0;
-      const interval = setInterval(() => {
-        percent += 10;
-        if (percent > 100) percent = 100;
-        this.downloadProgress = percent;
-        const downloadedMb = Math.round((percent / 100) * totalMb);
+  /**
+   * Stream one artifact file to disk with `.part` resume support.
+   * Resolves with the bytes written, or null when pause/cancel aborted the run.
+   */
+  private downloadFile(
+    artifact: SttModelArtifact,
+    filePath: string,
+    target: string,
+    totalBytes: number,
+    getReceived: () => number,
+    setReceived: (value: number) => void
+  ): Promise<number | null> {
+    const urlStr = artifactFileUrl(artifact, filePath);
+    const partFile = `${target}.part`;
 
-        const progress: ParakeetDownloadProgress = {
-          model: modelId,
-          percent,
-          downloadedMb,
-          totalMb,
-          completed: percent >= 100,
-        };
+    return new Promise<number | null>((resolve, reject) => {
+      const resumeFrom = this.fileSizeSafe(partFile);
+      let baseReceived = getReceived();
+      let aborted = false;
 
-        onProgress?.(progress);
-        this.onProgressCallback?.(progress);
-
-        if (percent >= 100) {
-          clearInterval(interval);
-          this.isDownloading = false;
-          this.downloadingModel = undefined;
-          this.downloadProgress = 100;
-          try {
-            if (sourceWeights && fs.existsSync(sourceWeights)) {
-              fs.copyFileSync(sourceWeights, targetFile);
-            } else {
-              // Write a default placeholder if no base weights found
-              fs.writeFileSync(
-                targetFile,
-                `# NVIDIA Parakeet Model: ${meta.name}\nArchitecture: ${meta.architecture}\nParameters: ${meta.parameters}\n`
-              );
-            }
-          } catch (err) {
-            console.warn('[ParakeetEngine] Failed to write model weights:', err);
-          }
-          resolve(true);
+      const doRequest = (currentUrl: string, redirectCount = 0): void => {
+        if (this.downloadIntent !== 'downloading') {
+          aborted = true;
+          resolve(null);
+          return;
         }
-      }, 200);
+        if (redirectCount > 10) {
+          reject(new Error('Too many redirects'));
+          return;
+        }
+
+        let parsed: URL;
+        try {
+          parsed = new URL(currentUrl);
+        } catch {
+          reject(new Error(`Invalid download URL: ${currentUrl}`));
+          return;
+        }
+        const transport: typeof https | typeof http = parsed.protocol === 'https:' ? https : http;
+        const headers: Record<string, string> = {
+          'User-Agent': 'MeetVisionAI/1.0 (Electron)',
+        };
+        if (resumeFrom > 0) {
+          headers['Range'] = `bytes=${resumeFrom}-`;
+        }
+
+        const req = transport.get(
+          {
+            hostname: parsed.hostname,
+            path: parsed.pathname + parsed.search,
+            headers,
+            timeout: DOWNLOAD_TIMEOUT_MS,
+          },
+          (res) => {
+            const { statusCode, headers: resHeaders } = res;
+
+            if (statusCode === 301 || statusCode === 302 || statusCode === 307 || statusCode === 308) {
+              const location = resHeaders.location;
+              if (!location) {
+                reject(new Error(`Redirect with no Location header (HTTP ${statusCode})`));
+                return;
+              }
+              res.resume();
+              // Hugging Face answers /resolve/ with a *relative* Location
+              // (`/api/resolve-cache/...`), so resolve it against the current
+              // absolute URL instead of parsing it standalone.
+              let nextUrl: string;
+              try {
+                nextUrl = new URL(location, parsed).toString();
+              } catch {
+                reject(new Error(`Invalid redirect target: ${location}`));
+                return;
+              }
+              doRequest(nextUrl, redirectCount + 1);
+              return;
+            }
+
+            if (statusCode !== 200 && statusCode !== 206) {
+              res.resume();
+              if (statusCode === 401 || statusCode === 403) {
+                reject(
+                  new Error(
+                    `This model requires a Hugging Face account and acceptance of the model license. ` +
+                      `Accept the terms on huggingface.co (${artifact.repo}) and retry.`
+                  )
+                );
+                return;
+              }
+              reject(new Error(`HTTP ${statusCode} while downloading ${filePath}`));
+              return;
+            }
+
+            let restartFromZero = false;
+            if (statusCode === 200 && resumeFrom > 0) {
+              restartFromZero = true;
+              baseReceived -= resumeFrom;
+            }
+
+            const flags = statusCode === 206 && !restartFromZero ? 'a' : 'w';
+            const fileStream = fs.createWriteStream(partFile, { flags });
+            let fileBytes = restartFromZero ? 0 : resumeFrom;
+            let lastEmit = 0;
+
+            res.on('data', (chunk: Buffer) => {
+              if (this.downloadIntent !== 'downloading') return;
+              fileBytes += chunk.length;
+              const now = Date.now();
+              if (now - lastEmit > 120) {
+                lastEmit = now;
+                setReceived(Math.min(totalBytes - 1, baseReceived + fileBytes));
+              }
+            });
+
+            res.on('error', (err) => {
+              fileStream.destroy();
+              if (aborted) resolve(null);
+              else reject(err);
+            });
+
+            fileStream.on('error', (err) => {
+              if (aborted) resolve(null);
+              else reject(err);
+            });
+
+            fileStream.on('finish', () => {
+              if (this.downloadIntent !== 'downloading') {
+                aborted = true;
+                resolve(null);
+                return;
+              }
+              if (restartFromZero) {
+                try {
+                  fs.unlinkSync(target);
+                } catch {
+                  // ignore
+                }
+              }
+              try {
+                if (fs.existsSync(target)) fs.unlinkSync(target);
+                fs.renameSync(partFile, target);
+              } catch (renameErr) {
+                reject(renameErr instanceof Error ? renameErr : new Error(String(renameErr)));
+                return;
+              }
+              resolve(fileBytes);
+            });
+
+            res.pipe(fileStream);
+          }
+        );
+
+        this.activeRequest = req;
+
+        req.on('timeout', () => {
+          req.destroy(new Error('Connection timed out'));
+        });
+
+        req.on('error', (err) => {
+          if (this.downloadIntent !== 'downloading') {
+            aborted = true;
+            resolve(null);
+          } else {
+            reject(err);
+          }
+        });
+      };
+
+      doRequest(urlStr);
     });
   }
 
+  /**
+   * Pauses the currently active model download.
+   * Preserves `.part` files so the download can be resumed later.
+   */
+  pauseDownload(): boolean {
+    if (!this.isDownloading) {
+      return false;
+    }
+    this.downloadIntent = 'pausing';
+    if (this.activeRequest) {
+      try {
+        this.activeRequest.destroy();
+      } catch {
+        // ignore
+      }
+      this.activeRequest = null;
+    }
+    return true;
+  }
+
+  /**
+   * Cancels the currently active download (or cleans up partial files).
+   */
+  cancelDownload(modelId?: ParakeetModelType): boolean {
+    const targetModel = modelId || this.downloadingModel;
+    if (this.isDownloading) {
+      this.downloadIntent = 'cancelling';
+      if (this.activeRequest) {
+        try {
+          this.activeRequest.destroy();
+        } catch {
+          // ignore
+        }
+        this.activeRequest = null;
+      }
+      return true;
+    }
+
+    if (targetModel) {
+      this.discardPartialDownloads(this.modelDirFor(targetModel));
+      this.downloadProgress = 0;
+      this.downloadingModel = undefined;
+      const artifact = this.resolveArtifact(targetModel);
+      const progress: ParakeetDownloadProgress = {
+        model: targetModel,
+        percent: 0,
+        downloadedMb: 0,
+        totalMb: artifact ? Math.round(artifactTotalBytes(artifact) / (1024 * 1024)) : 0,
+        completed: false,
+        cancelled: true,
+      };
+      this.onProgressCallback?.(progress);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Returns the absolute path to reveal for this modelId (the model directory,
+   * or the legacy single-file weights), or null when nothing is installed.
+   */
+  revealModelInFolder(modelId: ParakeetModelType): string | null {
+    const dir = this.modelDirFor(modelId);
+    if (fs.existsSync(dir)) return dir;
+    return this.legacyModelFile(modelId) ?? (fs.existsSync(this.modelsDir) ? this.modelsDir : null);
+  }
+
   deleteModel(modelId: ParakeetModelType): boolean {
-    const searchDirs = [this.modelsDir, path.join(process.cwd(), 'models', 'parakeet')];
     let deleted = false;
 
-    for (const dir of searchDirs) {
-      if (!fs.existsSync(dir)) continue;
+    const dir = this.modelDirFor(modelId);
+    if (fs.existsSync(dir)) {
       try {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-          if (file.startsWith(modelId)) {
-            const p = path.join(dir, file);
-            fs.rmSync(p, { recursive: true, force: true });
-            console.log(`[ParakeetEngine] Deleted model file: ${p}`);
-            deleted = true;
-          }
-        }
+        fs.rmSync(dir, { recursive: true, force: true });
+        console.log(`[ParakeetEngine] Deleted model directory: ${dir}`);
+        deleted = true;
       } catch (err) {
-        console.warn(`[ParakeetEngine] Failed to delete model ${modelId}:`, err);
+        console.warn(`[ParakeetEngine] Failed to delete ${dir}:`, err);
       }
     }
+
+    // Legacy flat files (e.g. parakeet-flash.bin, parakeet-flash.nemo)
+    for (const searchDir of [this.modelsDir, path.join(process.cwd(), 'models', 'parakeet')]) {
+      if (!fs.existsSync(searchDir)) continue;
+      try {
+        for (const file of fs.readdirSync(searchDir)) {
+          if (!file.startsWith(modelId)) continue;
+          const full = path.join(searchDir, file);
+          if (fs.statSync(full).isDirectory()) continue;
+          fs.rmSync(full, { force: true });
+          console.log(`[ParakeetEngine] Deleted legacy model file: ${full}`);
+          deleted = true;
+        }
+      } catch (err) {
+        console.warn(`[ParakeetEngine] Failed to clean ${searchDir}:`, err);
+      }
+    }
+
     return deleted;
   }
 
   async initialize(): Promise<boolean> {
-    this.detectBinary();
-    this.detectModelDir();
-    return this.binaryPath !== null;
+    return Boolean(this.getParakeetStatus().runtimeAvailable);
   }
 
   async setModel(modelName: string): Promise<boolean> {
-    const valid = PARAKEET_MODELS.some((m) => m.id === modelName);
-    if (valid) {
-      this.currentModel = modelName as ParakeetModelType;
+    if (isParakeetModelType(modelName)) {
+      this.currentModel = modelName;
       console.log(`[ParakeetEngine] Switched model to: ${this.currentModel}`);
       return true;
     }
@@ -443,10 +812,80 @@ export class ParakeetEngine implements ISTTEngine {
     this.audioBuffer = { system: [], mic: [] };
 
     const meta = PARAKEET_MODELS.find((m) => m.id === this.currentModel) || PARAKEET_MODELS[0];
+    const { artifact, runtime, usingLegacy } = this.resolveEffectiveRuntime();
 
-    console.log(`[ParakeetEngine] Starting with model: ${meta.name} (${meta.architecture}, ${meta.parameters})`);
+    console.log(
+      `[ParakeetEngine] Starting ${meta?.name} (${meta?.parameters}) via ${runtime.displayName}` +
+        (artifact ? ` · ${artifact.repo}` : '') +
+        (usingLegacy ? ' (legacy fallback)' : '')
+    );
 
+    if (!runtime.isAvailable()) {
+      console.warn(
+        `[ParakeetEngine] ${runtime.displayName} is not installed; transcription will be unavailable until it is.`
+      );
+    } else if (!this.getParakeetStatus().currentModelInstalled) {
+      console.warn(`[ParakeetEngine] ${meta?.name} weights are not installed yet.`);
+    } else {
+      this.warmUpRuntime();
+    }
+  }
 
+  /**
+   * Loads the current model once in the background so its Core ML graphs are
+   * compiled and the weights are in the page cache. Without this the first
+   * utterance after a start or model switch pays the full cold load (~32 s).
+   * The helper is a one-shot process, so this warms the on-disk and OS caches
+   * rather than keeping a model resident. Output is discarded.
+   */
+  private warmUpRuntime(): void {
+    const { artifact, runtime, usingLegacy, legacyFile } = this.resolveEffectiveRuntime();
+    if (!runtime.isAvailable()) return;
+    if (!usingLegacy && artifact && !this.isArtifactInstalled(this.currentModel, artifact)) return;
+
+    const activeModel = this.currentModel;
+    const warmupWav = path.join(os.tmpdir(), `parakeet-warmup-${Date.now()}.wav`);
+
+    try {
+      // Silence that still meets FluidAudio's 0.3 s minimum duration.
+      fs.writeFileSync(warmupWav, encodeWav(new Int16Array(MIN_INFERENCE_SAMPLES), 16000));
+    } catch (err) {
+      console.warn('[ParakeetEngine] Warm-up skipped (could not write temp wav):', err);
+      return;
+    }
+
+    const request = {
+      modelDir: this.modelDirFor(activeModel),
+      wavPath: warmupWav,
+      timeoutMs: WARMUP_TIMEOUT_MS,
+      modelFile: legacyFile,
+      coreMlEngine: artifact?.engine,
+      modelRoot: artifact?.modelRoot,
+    };
+
+    console.log(
+      `[ParakeetEngine] Warming up ${activeModel} (first load compiles Core ML graphs and can take ~30s)...`
+    );
+
+    this.enqueueInference(() => runtime.transcribe(request))
+      .then(() => {
+        console.log(`[ParakeetEngine] ${activeModel} runtime warm.`);
+      })
+      .catch((error) => {
+        const execError = error as Error & { stderr?: string };
+        console.warn(
+          '[ParakeetEngine] Warm-up failed:',
+          execError.message,
+          execError.stderr ? `\n  stderr: ${execError.stderr.trim()}` : ''
+        );
+      })
+      .finally(() => {
+        try {
+          fs.unlinkSync(warmupWav);
+        } catch {
+          // ignore
+        }
+      });
   }
 
   async stop(): Promise<void> {
@@ -461,8 +900,18 @@ export class ParakeetEngine implements ISTTEngine {
       clearTimeout(this.utteranceTrackers.mic.silenceTimer);
       this.utteranceTrackers.mic.silenceTimer = null;
     }
+    if (this.utteranceTrackers.system.interimTimer) {
+      clearInterval(this.utteranceTrackers.system.interimTimer);
+      this.utteranceTrackers.system.interimTimer = null;
+    }
+    if (this.utteranceTrackers.mic.interimTimer) {
+      clearInterval(this.utteranceTrackers.mic.interimTimer);
+      this.utteranceTrackers.mic.interimTimer = null;
+    }
     this.utteranceTrackers.system.isSpeaking = false;
     this.utteranceTrackers.mic.isSpeaking = false;
+    this.utteranceTrackers.system.lastInterimSamples = 0;
+    this.utteranceTrackers.mic.lastInterimSamples = 0;
   }
 
   feedAudio(frame: AudioFrame): void {
@@ -522,11 +971,20 @@ export class ParakeetEngine implements ISTTEngine {
         });
       }
 
-      // Refresh 2-second completion timer: if user stops speaking for >2s, finalize and append
+      // Refresh completion timer: if the speaker stops for >3s, finalize and append
       if (tracker.isSpeaking) {
         tracker.silenceTimer = setTimeout(() => {
           this.finalizeUtterance(tracker, speaker);
-        }, 2000);
+        }, 3000);
+      }
+
+      // Re-decode the growing utterance periodically so the transcript streams
+      // while the speaker is still talking (instead of only after a pause).
+      if (tracker.isSpeaking && !tracker.interimTimer) {
+        tracker.interimTimer = setInterval(
+          () => this.runInterimDecode(tracker, speaker),
+          INTERIM_DECODE_INTERVAL_MS
+        );
       }
 
       // Only flush if continuous uninterrupted speech runs for 15s without any natural pause
@@ -554,13 +1012,40 @@ export class ParakeetEngine implements ISTTEngine {
         this.transcribeAudio(chunksToProcess, totalSamples, segmentId, startMs, speaker, true);
       }
     } else {
-      // Silence / low energy: ensure 2-second completion timer is active
+      // Silence / low energy: ensure completion timer is active
       if (!tracker.silenceTimer && (tracker.isSpeaking || tracker.totalSamples > 0)) {
         tracker.silenceTimer = setTimeout(() => {
           this.finalizeUtterance(tracker, speaker);
-        }, 2000);
+        }, 3000);
       }
     }
+  }
+
+  /**
+   * Periodically transcribes the in-progress utterance and emits it as a
+   * non-final segment so the transcript updates while the speaker talks. Skips
+   * while another inference runs, keeping CPU/ANE load bounded.
+   */
+  private runInterimDecode(
+    tracker: typeof this.utteranceTrackers.mic,
+    speaker: string
+  ): void {
+    if (!this.active || !tracker.isSpeaking || tracker.isBusy) return;
+    if (tracker.chunks.length === 0 || tracker.totalSamples < INTERIM_MIN_SAMPLES) return;
+    // Require some new audio since the previous interim decode.
+    if (tracker.totalSamples - tracker.lastInterimSamples < Math.round(INTERIM_MIN_SAMPLES * 0.5)) {
+      return;
+    }
+    tracker.lastInterimSamples = tracker.totalSamples;
+    tracker.lastInterimMs = Date.now();
+    this.transcribeAudio(
+      [...tracker.chunks],
+      tracker.totalSamples,
+      tracker.segmentId,
+      tracker.speechStartMs,
+      speaker,
+      false
+    );
   }
 
   private finalizeUtterance(tracker: typeof this.utteranceTrackers.mic, speaker: string): void {
@@ -569,6 +1054,10 @@ export class ParakeetEngine implements ISTTEngine {
     if (tracker.silenceTimer) {
       clearTimeout(tracker.silenceTimer);
       tracker.silenceTimer = null;
+    }
+    if (tracker.interimTimer) {
+      clearInterval(tracker.interimTimer);
+      tracker.interimTimer = null;
     }
 
     const chunksToProcess = tracker.chunks;
@@ -581,16 +1070,31 @@ export class ParakeetEngine implements ISTTEngine {
     tracker.isSpeaking = false;
     tracker.chunks = [];
     tracker.totalSamples = 0;
+    tracker.lastInterimSamples = 0;
     tracker.lastInterimMs = 0;
 
-    // Only skip if total audio was a brief transient click (<300ms) and never sustained speech
-    if (totalSamples < 16000 * 0.3 && !wasSpeaking) {
+    // Skip brief transients that never sustained speech. Real short words are
+    // kept and padded up to FluidAudio's minimum in `transcribeAudio`.
+    if (totalSamples < MIN_USEFUL_SAMPLES && !wasSpeaking) {
       return;
     }
 
     if (chunksToProcess.length > 0 && totalSamples > 0) {
       this.transcribeAudio(chunksToProcess, totalSamples, segmentId, startMs, speaker, true);
     }
+  }
+
+  /**
+   * Runs `task` after any in-flight inference finishes. Failures never break the
+   * chain, so a single bad utterance cannot stall later transcriptions.
+   */
+  private enqueueInference<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.inferenceQueue.then(task, task);
+    this.inferenceQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 
   private transcribeAudio(
@@ -602,20 +1106,40 @@ export class ParakeetEngine implements ISTTEngine {
     isFinal = true
   ): void {
     const tracker = this.utteranceTrackers[speaker === 'You' ? 'mic' : 'system'];
-    const modelPath = this.getActiveModelPath();
-    if (!this.binaryPath || !modelPath) {
-      console.warn('[ParakeetEngine] No binary or model available for inference', {
-        binaryPath: this.binaryPath,
-        modelPath,
+    const { artifact, runtime: activeRuntime, usingLegacy, legacyFile } = this.resolveEffectiveRuntime();
+
+    if (!activeRuntime.isAvailable()) {
+      console.warn(`[ParakeetEngine] No runtime available for ${this.currentModel}`, {
+        platform: currentPlatform(),
+        runtime: activeRuntime.kind,
+        runtimeBinary: activeRuntime.resolveBinary(),
       });
       return;
     }
 
-    const combined = new Int16Array(totalSamples);
+    // A non-legacy runtime needs its artifact files on disk.
+    if (!usingLegacy && artifact && !this.isArtifactInstalled(this.currentModel, artifact)) {
+      console.warn(`[ParakeetEngine] Model files for ${this.currentModel} are not installed yet.`);
+      return;
+    }
+    if (usingLegacy && !legacyFile) {
+      return;
+    }
+
+    const sampled = new Int16Array(totalSamples);
     let offset = 0;
     for (const c of chunks) {
-      combined.set(c, offset);
+      sampled.set(c, offset);
       offset += c.length;
+    }
+
+    // FluidAudio throws invalidAudioData below 0.3 s, so pad short utterances
+    // with silence rather than losing the word entirely.
+    let combined = sampled;
+    if (combined.length < MIN_INFERENCE_SAMPLES) {
+      const padded = new Int16Array(MIN_INFERENCE_SAMPLES);
+      padded.set(combined);
+      combined = padded;
     }
 
     const wavBuffer = encodeWav(combined, 16000);
@@ -633,52 +1157,72 @@ export class ParakeetEngine implements ISTTEngine {
 
     if (tracker) tracker.isBusy = true;
 
-    execFile(
-      this.binaryPath,
-      ['-m', modelPath, '-f', tempWav, '-np', '-t', '4'],
-      { timeout: 10000 },
-      (error, stdout) => {
-        if (tracker) tracker.isBusy = false;
-        try {
-          fs.unlinkSync(tempWav);
-        } catch {}
+    // Snapshot everything the inference needs *now*. The task below runs only
+    // once the queue drains, and the user may have switched models by then —
+    // reading `this.currentModel` inside the closure would pair one model's
+    // directory with another model's engine.
+    const activeModel = this.currentModel;
+    const inferenceRequest = {
+      modelDir: this.modelDirFor(activeModel),
+      wavPath: tempWav,
+      timeoutMs: INFERENCE_TIMEOUT_MS,
+      modelFile: legacyFile,
+      coreMlEngine: artifact?.engine,
+      modelRoot: artifact?.modelRoot,
+    };
 
-        if (error) {
-          console.warn('[ParakeetEngine] execFile error:', error);
+    this.enqueueInference(() => activeRuntime.transcribe(inferenceRequest))
+      .then((text) => {
+        if (tracker) tracker.isBusy = false;
+        const cleanText = (text || '').trim();
+        if (cleanText.length === 0) return;
+        // Drop a late interim whose utterance was already finalized or reset.
+        if (!isFinal && (!this.active || !tracker?.isSpeaking || tracker.segmentId !== segmentId)) {
           return;
         }
-
-        const lines = stdout.split('\n').map((l) => l.trim()).filter(Boolean);
-        const textLines = lines.filter(
-          (l) => !/^(load_backend|ggml_|read_audio|parakeet_|system_info|whisper_|Processing file:|\s*$)/i.test(l)
+        this.onSegmentCallback?.({
+          id: segmentId,
+          text: cleanText,
+          isFinal,
+          startMs,
+          endMs: Date.now(),
+          speaker,
+        });
+      })
+      .catch((error) => {
+        if (tracker) tracker.isBusy = false;
+        // execFile surfaces the child's stderr on the error object; the Core ML
+        // helper writes its real diagnosis there, not in `message`.
+        const execError = error as Error & { stderr?: string; stdout?: string };
+        const stderr = (execError.stderr || '').trim();
+        const stdout = (execError.stdout || '').trim();
+        console.warn(
+          '[ParakeetEngine] Inference error:',
+          execError.message,
+          stderr ? `\n  stderr: ${stderr}` : '',
+          stdout ? `\n  stdout: ${stdout}` : ''
         );
-        const cleanText = textLines.join(' ').trim();
-
-        // Emit decoded live interim or finalized speech text
-        if (cleanText && cleanText.length > 0) {
-          this.onSegmentCallback?.({
-            id: segmentId,
-            text: cleanText,
-            isFinal,
-            startMs,
-            endMs: Date.now(),
-            speaker,
-          });
+      })
+      .finally(() => {
+        try {
+          fs.unlinkSync(tempWav);
+        } catch {
+          // ignore
         }
-      }
-    );
+      });
   }
 
   getStatus(): STTEngineInfo {
     const meta = PARAKEET_MODELS.find((m) => m.id === this.currentModel) || PARAKEET_MODELS[0];
+    const { runtime } = this.resolveEffectiveRuntime();
 
     return {
       id: this.id,
       name: this.name,
-      description: `NVIDIA FastConformer (${meta.name}, ${meta.parameters}). State-of-the-art ASR accuracy with CTC/TDT architectures.`,
+      description: `NVIDIA FastConformer (${meta.name}, ${meta.parameters}). ${runtime.displayName}.`,
       isExperimental: true,
-      available: true,
-      statusDetail: `Active: ${meta.name} (${meta.architecture}, ${meta.parameters})`,
+      available: runtime.isAvailable(),
+      statusDetail: `Active: ${meta.name} (${meta.architecture}) via ${runtime.displayName}`,
     };
   }
 

@@ -32,6 +32,7 @@ export class CaptureComponent implements OnInit, OnDestroy {
   readonly transcriptionMode = signal<TranscriptionMode>('everyone');
   readonly meetingAudioActive = signal(false);
   readonly micAudioActive = signal(false);
+  readonly systemAudioError = signal<string | null>(null);
 
   // VAD parameters (Energy-based Voice Activity Detection)
   // Dynamic threshold: adjustable between 0.002 (high sensitivity) to 0.025 (high noise cut)
@@ -138,19 +139,70 @@ export class CaptureComponent implements OnInit, OnDestroy {
 
   async startCapture(): Promise<void> {
     this.errorMessage.set(null);
+    this.systemAudioError.set(null);
 
     try {
-      await this.setupSystemAudio();
+      // System (loopback) audio is a separate concern from the microphone. If it
+      // is unavailable we still allow Everyone mode to capture the mic, but we
+      // never substitute the microphone for system audio.
+      try {
+        await this.setupSystemAudio();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.systemAudioError.set(msg);
+        this.meetingAudioActive.set(false);
+        console.warn('[CaptureComponent] System audio unavailable:', msg);
+      }
+
       if (this.transcriptionMode() === 'everyone') {
         await this.setupMicAudio();
       }
 
       this.isCapturing.set(true);
       this.updateSourceName();
+
+      if (this.transcriptionMode() === 'other-only' && !this.meetingAudioActive()) {
+        this.errorMessage.set(
+          this.systemAudioError() || 'No system audio (loopback) device available for Other-only mode.'
+        );
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.errorMessage.set(`Audio capture error: ${msg}`);
       console.error('[CaptureComponent] Audio capture initialization failed:', msg);
+    }
+  }
+
+  /**
+   * Resolves the device used for system/meeting audio. Only the explicitly
+   * configured device or a detected virtual loopback device (BlackHole,
+   * Soundflower, VB-Cable, Stereo Mix, ...) qualifies — the default microphone
+   * is deliberately excluded so the user's own voice is only captured on the
+   * dedicated mic channel in Everyone mode.
+   */
+  private async resolveMeetingDeviceId(): Promise<string | undefined> {
+    try {
+      const settings = await this.ipcService.getSettings();
+      if (settings.meetingAudioDeviceId) return settings.meetingAudioDeviceId;
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const patterns = [
+        /blackhole/i,
+        /loopback/i,
+        /soundflower/i,
+        /vb-?cable/i,
+        /virtual/i,
+        /aggregate/i,
+        /(system|meeting|display|monitor)\s*audio/i,
+        /stereo mix/i,
+        /what u hear/i,
+      ];
+      const match = devices
+        .filter((d) => d.kind === 'audioinput' && d.label)
+        .find((d) => patterns.some((re) => re.test(d.label)));
+      return match?.deviceId;
+    } catch {
+      return undefined;
     }
   }
 
@@ -160,15 +212,15 @@ export class CaptureComponent implements OnInit, OnDestroy {
       throw new Error('navigator.mediaDevices is not available in this environment');
     }
 
-    const settings = await this.ipcService.getSettings();
     let stream: MediaStream | null = null;
 
-    // If specific device ID configured for meeting audio
-    if (settings.meetingAudioDeviceId) {
+    // 1) Explicitly configured (or auto-detected) loopback device.
+    const deviceId = await this.resolveMeetingDeviceId();
+    if (deviceId) {
       try {
         stream = await mediaDevices.getUserMedia({
           audio: {
-            deviceId: { exact: settings.meetingAudioDeviceId },
+            deviceId: { exact: deviceId },
             sampleRate: 16000,
             channelCount: 1,
             echoCancellation: false,
@@ -180,31 +232,30 @@ export class CaptureComponent implements OnInit, OnDestroy {
       }
     }
 
-    // Attempt getDisplayMedia for loopback audio
+    // 2) OS-level loopback via getDisplayMedia (Windows & macOS ScreenCaptureKit).
     if (!stream && typeof mediaDevices.getDisplayMedia === 'function') {
       try {
-        stream = await mediaDevices.getDisplayMedia({
+        const display = await mediaDevices.getDisplayMedia({
           audio: true,
           video: true,
         });
-        if (!stream.getAudioTracks() || stream.getAudioTracks().length === 0) {
-          stream.getTracks().forEach((t) => t.stop());
-          stream = null;
+        if (display.getAudioTracks() && display.getAudioTracks().length > 0) {
+          stream = display;
+          // Stop unused video tracks so they don't consume CPU or GPU resources
+          display.getVideoTracks().forEach((t) => t.stop());
+        } else {
+          display.getTracks().forEach((t) => t.stop());
         }
-      } catch {
-        // Fallback to getUserMedia (e.g. BlackHole or default device)
+      } catch (err) {
+        console.warn('[CaptureComponent] OS-level loopback getDisplayMedia unavailable:', err);
       }
     }
 
     if (!stream) {
-      stream = await mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-        },
-      });
+      // Never fall back to the default microphone as "system" audio.
+      throw new Error(
+        'No system audio (loopback) stream available. On macOS, ensure Screen & System Audio Recording permission is granted. On Windows, verify Stereo Mix / audio permissions, or select a loopback device in Settings.'
+      );
     }
 
     this.systemMediaStream = stream;
@@ -335,11 +386,32 @@ export class CaptureComponent implements OnInit, OnDestroy {
     } else {
       // In 'other-only' mode, shut down mic pipeline completely
       this.stopMicAudio();
+      // Retry the loopback device in case it was unavailable at start-up.
+      if (!this.meetingAudioActive()) {
+        this.setupSystemAudio()
+          .then(() => {
+            this.systemAudioError.set(null);
+            this.errorMessage.set(null);
+          })
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.systemAudioError.set(msg);
+            this.meetingAudioActive.set(false);
+          });
+      }
     }
     this.updateSourceName();
   }
 
   private updateSourceName(): void {
+    if (!this.meetingAudioActive()) {
+      this.sourceName.set(
+        this.transcriptionMode() === 'everyone'
+          ? 'Microphone only (no system loopback device)'
+          : 'System loopback required (none selected)'
+      );
+      return;
+    }
     if (this.transcriptionMode() === 'everyone') {
       this.sourceName.set('Dual Audio: Meeting Audio + Microphone (Everyone)');
     } else {
@@ -433,9 +505,14 @@ export class CaptureComponent implements OnInit, OnDestroy {
 
     setTimeout(() => {
       if (this.isCapturing()) {
-        this.setupSystemAudio().catch((err) => {
-          console.warn('[CaptureComponent] System audio reconnect failed:', err);
-        });
+        this.setupSystemAudio()
+          .then(() => this.systemAudioError.set(null))
+          .catch((err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.systemAudioError.set(msg);
+            this.meetingAudioActive.set(false);
+            console.warn('[CaptureComponent] System audio reconnect failed:', msg);
+          });
       }
     }, 1500);
   }

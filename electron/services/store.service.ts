@@ -1,7 +1,13 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AppSettings, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
+import { AppSettings, AnswerMode, CodeLanguage, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
+import {
+  LlmProviderId,
+  LLM_PROVIDERS,
+  DEFAULT_LLM_PROVIDER,
+  getLlmProviderEntry,
+} from '@shared/llm-provider-catalog';
 
 interface StoredConfigFile {
   sttProvider: STTEngineType;
@@ -9,12 +15,15 @@ interface StoredConfigFile {
   parakeetModel?: ParakeetModelType;
   meetingAudioDeviceId?: string;
   micAudioDeviceId?: string;
-  llmProvider: 'anthropic' | 'local';
+  llmProvider: LlmProviderId;
   llmModel: string;
+  llmThinkingEnabled?: boolean;
+  answerMode?: AnswerMode;
+  codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
-  encryptedAnthropicApiKey?: string; // base64 encoded ciphertext
+  encryptedApiKeys?: Record<string, string>; // provider id -> base64 encoded ciphertext
   hasAcceptedConsent?: boolean;
   consentAcceptedAt?: number;
   sttLanguage?: 'en' | 'hi' | 'multi';
@@ -47,8 +56,11 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   sttProvider: 'parakeet',
   transcriptionMode: 'everyone',
   parakeetModel: 'parakeet-flash',
-  llmProvider: 'local',
-  llmModel: 'claude-3-5-sonnet-20241022',
+  llmProvider: DEFAULT_LLM_PROVIDER,
+  llmModel: 'deepseek-flash',
+  llmThinkingEnabled: false,
+  answerMode: 'short',
+  codeLanguage: 'auto',
   temperature: 0.3,
   maxTokens: 500,
   overlayOpacity: 0.88,
@@ -80,6 +92,19 @@ export class StoreService {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
         const parsed = JSON.parse(raw);
+
+        // One-time migration from the single Anthropic key field.
+        if (parsed.encryptedAnthropicApiKey && !parsed.encryptedApiKeys) {
+          parsed.encryptedApiKeys = { anthropic: parsed.encryptedAnthropicApiKey };
+        }
+        delete parsed.encryptedAnthropicApiKey;
+
+        // Drop an unknown provider id so the default takes over.
+        if (parsed.llmProvider && !getLlmProviderEntry(parsed.llmProvider)) {
+          delete parsed.llmProvider;
+          delete parsed.llmModel;
+        }
+
         return {
           ...DEFAULT_SETTINGS,
           ...parsed,
@@ -135,9 +160,15 @@ export class StoreService {
     }
   }
 
-  getDecryptedAnthropicKey(): string | undefined {
-    const decrypted = this.decryptSecret(this.data.encryptedAnthropicApiKey);
-    return decrypted || process.env.ANTHROPIC_API_KEY || undefined;
+  getDecryptedApiKey(providerId: LlmProviderId): string | undefined {
+    const decrypted = this.decryptSecret(this.data.encryptedApiKeys?.[providerId]);
+    if (decrypted) return decrypted;
+    const envKey = getLlmProviderEntry(providerId)?.envKey;
+    return envKey ? process.env[envKey] || undefined : undefined;
+  }
+
+  hasApiKey(providerId: LlmProviderId): boolean {
+    return Boolean(this.getDecryptedApiKey(providerId));
   }
 
   getContextProfile(): ContextProfile {
@@ -146,7 +177,10 @@ export class StoreService {
 
   getSettings(): AppSettings {
     const isEncAvailable = safeStorage.isEncryptionAvailable();
-    const hasAnthropic = Boolean(this.getDecryptedAnthropicKey());
+    const hasApiKeys: Partial<Record<LlmProviderId, boolean>> = {};
+    for (const provider of LLM_PROVIDERS) {
+      hasApiKeys[provider.id] = this.hasApiKey(provider.id);
+    }
 
     return {
       sttProvider: this.data.sttProvider === 'apple-speech' ? 'apple-speech' : 'parakeet',
@@ -156,10 +190,14 @@ export class StoreService {
       micAudioDeviceId: this.data.micAudioDeviceId,
       llmProvider: this.data.llmProvider,
       llmModel: this.data.llmModel,
+      llmThinkingEnabled: Boolean(this.data.llmThinkingEnabled),
+      answerMode: this.data.answerMode || 'short',
+      codeLanguage: this.data.codeLanguage || 'auto',
       temperature: this.data.temperature,
       maxTokens: this.data.maxTokens,
       profile: { ...this.data.profile },
-      hasAnthropicKey: hasAnthropic,
+      hasApiKeys,
+      hasAnthropicKey: hasApiKeys.anthropic,
       isEncryptionAvailable: isEncAvailable,
       hasAcceptedConsent: Boolean(this.data.hasAcceptedConsent),
       consentAcceptedAt: this.data.consentAcceptedAt,
@@ -225,12 +263,20 @@ export class StoreService {
     return this.data.multiWorkspace;
   }
 
-  updateSettings(newSettings: AppSettings): AppSettings {
-    if (newSettings.anthropicApiKey !== undefined) {
-      if (newSettings.anthropicApiKey.trim() === '') {
-        delete this.data.encryptedAnthropicApiKey;
-      } else {
-        this.data.encryptedAnthropicApiKey = this.encryptSecret(newSettings.anthropicApiKey);
+  updateSettings(newSettings: Partial<AppSettings>): AppSettings {
+    if (newSettings.apiKeys) {
+      for (const [providerId, key] of Object.entries(newSettings.apiKeys)) {
+        if (!getLlmProviderEntry(providerId)) continue;
+        if (key.trim() === '') {
+          if (this.data.encryptedApiKeys) {
+            delete this.data.encryptedApiKeys[providerId];
+          }
+        } else {
+          this.data.encryptedApiKeys = {
+            ...(this.data.encryptedApiKeys || {}),
+            [providerId]: this.encryptSecret(key),
+          };
+        }
       }
     }
 
@@ -239,8 +285,19 @@ export class StoreService {
     if (newSettings.parakeetModel) this.data.parakeetModel = newSettings.parakeetModel;
     if (newSettings.meetingAudioDeviceId !== undefined) this.data.meetingAudioDeviceId = newSettings.meetingAudioDeviceId;
     if (newSettings.micAudioDeviceId !== undefined) this.data.micAudioDeviceId = newSettings.micAudioDeviceId;
-    if (newSettings.llmProvider) this.data.llmProvider = newSettings.llmProvider;
+    if (newSettings.llmProvider && getLlmProviderEntry(newSettings.llmProvider)) {
+      this.data.llmProvider = newSettings.llmProvider;
+    }
     if (newSettings.llmModel) this.data.llmModel = newSettings.llmModel;
+    if (typeof newSettings.llmThinkingEnabled === 'boolean') {
+      this.data.llmThinkingEnabled = newSettings.llmThinkingEnabled;
+    }
+    if (newSettings.answerMode && ['short', 'detailed', 'simple'].includes(newSettings.answerMode)) {
+      this.data.answerMode = newSettings.answerMode;
+    }
+    if (newSettings.codeLanguage) {
+      this.data.codeLanguage = newSettings.codeLanguage;
+    }
     if (typeof newSettings.temperature === 'number') this.data.temperature = newSettings.temperature;
     if (typeof newSettings.maxTokens === 'number') this.data.maxTokens = newSettings.maxTokens;
     if (newSettings.sttLanguage) this.data.sttLanguage = newSettings.sttLanguage;

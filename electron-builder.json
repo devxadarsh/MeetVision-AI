@@ -10,6 +10,13 @@
     "dist-electron/**/*",
     "package.json"
   ],
+  "extraResources": [
+    {
+      "from": "electron/resources/bin",
+      "to": "bin",
+      "filter": ["**/*"]
+    }
+  ],
   "mac": {
     "category": "public.app-category.productivity",
     "target": [
@@ -27,7 +34,9 @@
     "entitlements": "electron/entitlements.mac.plist",
     "entitlementsInherit": "electron/entitlements.mac.inherit.plist",
     "extendInfo": {
-      "NSMicrophoneUsageDescription": "MeetVision AI requires microphone and meeting audio access to transcribe discussions and generate real-time talking points."
+      "NSMicrophoneUsageDescription": "MeetVision AI requires microphone and meeting audio access to transcribe discussions and generate real-time talking points.",
+      "NSAudioCaptureUsageDescription": "MeetVision AI requires meeting audio access to capture Google Meet and system audio in real-time.",
+      "NSScreenCaptureUsageDescription": "MeetVision AI requires screen and system audio recording access to capture meeting loopback audio."
     }
   },
   "dmg": {

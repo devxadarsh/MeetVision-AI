@@ -8,6 +8,12 @@
 /.angular/cache
 .sass-cache/
 
+# Bundled native STT runtimes (produced by `npm run build:native` / sherpa-onnx)
+/electron/resources/bin/*
+!/electron/resources/bin/.gitkeep
+/electron/native/parakeet-coreml/.build
+/electron/native/parakeet-coreml/Package.resolved
+
 # Local Environment & Secrets
 .env
 .env.*

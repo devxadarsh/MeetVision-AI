@@ -1,3 +1,5 @@
+import type { LlmProviderCatalogEntry, LlmProviderId } from './llm-provider-catalog';
+
 export type QuestionStatus = 'new' | 'unanswered' | 'answering' | 'answered' | 'pinned' | 'dismissed';
 
 export interface Question {
@@ -35,11 +37,27 @@ export interface MeetingSummary {
   markdown: string;
 }
 
+export type AnswerMode = 'short' | 'detailed' | 'simple';
+
+/** Preferred language for coding/DSA answers. */
+export type CodeLanguage =
+  | 'auto'
+  | 'python'
+  | 'javascript'
+  | 'typescript'
+  | 'java'
+  | 'cpp'
+  | 'csharp'
+  | 'go'
+  | 'rust';
+
 export interface Answer {
   questionId: string;
-  mode: 'short' | 'detailed' | 'simple';
+  mode: AnswerMode;
   bullets: string[];
   code?: string;
+  /** True when the provider stopped because it hit the output-token cap. */
+  truncated?: boolean;
   createdAt: number;
 }
 
@@ -47,13 +65,22 @@ export interface AnswerChunk {
   questionId: string;
   delta: string;
   isComplete?: boolean;
-  mode?: 'short' | 'detailed' | 'simple';
+  mode?: AnswerMode;
   code?: string;
+  truncated?: boolean;
 }
 
 export interface RegeneratePayload {
   questionId: string;
-  mode: 'short' | 'detailed' | 'simple';
+  mode: AnswerMode;
+}
+
+export interface AnswerQuestionPayload {
+  questionId?: string;
+  text?: string;
+  speaker?: string;
+  /** Answer depth for this request; falls back to settings.answerMode. */
+  mode?: AnswerMode;
 }
 
 export interface TranscriptSegment {
@@ -106,6 +133,10 @@ export interface ParakeetDownloadProgress {
   totalMb: number;
   completed: boolean;
   error?: string;
+  /** True when the download was intentionally paused (the .part file is preserved for resume) */
+  paused?: boolean;
+  /** True when the download was cancelled (the .part file has been deleted) */
+  cancelled?: boolean;
 }
 
 export interface ParakeetStatus {
@@ -116,6 +147,22 @@ export interface ParakeetStatus {
   isDownloading?: boolean;
   downloadProgress?: number;
   downloadingModel?: ParakeetModelType;
+  /** Host platform key used to resolve model artifacts (e.g. `darwin-arm64`). */
+  platform?: string;
+  /** Inference runtime backing the selected model (e.g. `coreml`, `sherpa-onnx`). */
+  runtime?: string;
+  /** Human-readable runtime name for the settings UI. */
+  runtimeName?: string;
+  /** False when the runtime binary is missing on this machine. */
+  runtimeAvailable?: boolean;
+  /** Explains why a runtime is unavailable, or how the model was resolved. */
+  runtimeDetail?: string;
+  /** True when every required file for the selected model exists locally. */
+  currentModelInstalled?: boolean;
+  /** Bytes required by the selected model on this platform (0 when unsupported). */
+  currentModelBytes?: number;
+  /** Caveats about the resolved artifact (provenance, unverified variant, ...). */
+  currentModelNotes?: string[];
 }
 
 export interface AudioFrame {
@@ -141,15 +188,22 @@ export interface AppSettings {
   parakeetModel?: ParakeetModelType;
   meetingAudioDeviceId?: string;
   micAudioDeviceId?: string;
-  llmProvider: 'anthropic' | 'local';
+  llmProvider: LlmProviderId;
   llmModel: string;
+  llmThinkingEnabled?: boolean;
+  /** Preferred answer depth; drives the prompt and the voice-triggered answers. */
+  answerMode?: AnswerMode;
+  /** Preferred language for coding/DSA answers. */
+  codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
-  // Key flags returned to UI (keys themselves are encrypted via safeStorage in main process)
+  // Per-provider key presence map returned to UI (keys themselves are encrypted via safeStorage in main process)
+  hasApiKeys?: Partial<Record<LlmProviderId, boolean>>;
+  /** @deprecated retained for backward compatibility; use hasApiKeys. */
   hasAnthropicKey?: boolean;
-  // Form input field when user updates their key
-  anthropicApiKey?: string;
+  // Write-only form inputs when the user updates a key, keyed by provider id
+  apiKeys?: Record<string, string>;
   isEncryptionAvailable?: boolean;
   // First-run privacy & legal consent (PRD Section 11 / Milestone 6)
   hasAcceptedConsent?: boolean;
@@ -174,6 +228,8 @@ export interface AppSettings {
   echoCancellation?: boolean;
   autoGainControl?: boolean;
 }
+
+export type LlmProviderInfo = LlmProviderCatalogEntry;
 
 export interface AppDiagnostics {
   platform: string;
@@ -249,10 +305,14 @@ export const IPC_CHANNELS = {
   PARAKEET_STATUS_GET: 'parakeet:status-get',
   PARAKEET_MODEL_DOWNLOAD: 'parakeet:model-download',
   PARAKEET_MODEL_DELETE: 'parakeet:model-delete',
+  PARAKEET_MODEL_REVEAL: 'parakeet:model-reveal',
+  PARAKEET_MODEL_PAUSE: 'parakeet:model-pause',
+  PARAKEET_MODEL_CANCEL: 'parakeet:model-cancel',
   PARAKEET_DOWNLOAD_PROGRESS: 'parakeet:download-progress',
   MACOS_PERMISSIONS_GET: 'macos:permissions-get',
   MACOS_PERMISSION_REQUEST: 'macos:permission-request',
   STT_ENGINES_GET: 'stt:engines-get',
+  LLM_PROVIDERS_GET: 'llm:providers-get',
 } as const;
 
 export interface ElectronAPI {
@@ -289,9 +349,14 @@ export interface ElectronAPI {
   getParakeetStatus: () => Promise<ParakeetStatus>;
   downloadParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
   deleteParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  revealParakeetModel: (modelId: ParakeetModelType) => Promise<boolean>;
+  pauseParakeetDownload: () => Promise<boolean>;
+  cancelParakeetDownload: () => Promise<boolean>;
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void) => () => void;
   // Pluggable STT Engines
   getSttEngines: () => Promise<STTEngineInfo[]>;
+  // Pluggable LLM Providers
+  getLlmProviders: () => Promise<LlmProviderInfo[]>;
   // macOS Permissions
   getMacosPermissions: () => Promise<MacosPermissions>;
   requestMacosMicrophonePermission: () => Promise<boolean>;
@@ -299,11 +364,11 @@ export interface ElectronAPI {
   onQuestionNew: (callback: (question: Question) => void) => () => void;
   onAnswerChunk: (callback: (chunk: AnswerChunk) => void) => () => void;
   regenerateAnswer: (payload: RegeneratePayload) => Promise<void>;
-  answerQuestion: (payload?: string | { questionId?: string; text?: string; speaker?: string }) => Promise<boolean>;
+  answerQuestion: (payload?: string | AnswerQuestionPayload) => Promise<boolean>;
   resetSession: () => Promise<boolean>;
   // Settings & Profile channels (Milestone 4)
   getSettings: () => Promise<AppSettings>;
-  setSettings: (settings: AppSettings) => Promise<AppSettings>;
+  setSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>;
   openSettings: () => Promise<boolean>;
   onSettingsChanged: (callback: (settings: AppSettings) => void) => () => void;
   onSettingsVisibilityChanged: (callback: (isOpen: boolean) => void) => () => void;

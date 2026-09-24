@@ -1,4 +1,8 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, session, systemPreferences } from 'electron';
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
+
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
+}
 import * as path from 'path';
 import * as url from 'url';
 import {
@@ -9,6 +13,8 @@ import {
   Question,
   RegeneratePayload,
   AppSettings,
+  AnswerMode,
+  AnswerQuestionPayload,
   AppDiagnostics,
   TranscriptionMode,
   AudioChunkPayload,
@@ -16,6 +22,7 @@ import {
   ParakeetStatus,
   ParakeetModelType,
 } from '@shared/ipc';
+import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 import { SttService } from './services/stt.service';
 import { QuestionDetector } from './services/detector.service';
 import { LlmService } from './services/llm.service';
@@ -128,12 +135,17 @@ function createOverlayWindow(): void {
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/overlay';
-    mainWindow.loadURL(devUrl).catch((err) => {
-      console.warn('Initial loadURL failed, retrying in 1s:', err);
-      setTimeout(() => {
-        mainWindow?.loadURL(devUrl);
-      }, 1000);
-    });
+    const loadOverlay = (retries = 6) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadURL(devUrl).catch((err) => {
+        if (retries > 0) {
+          setTimeout(() => loadOverlay(retries - 1), 800);
+        } else {
+          console.warn('[Main] Overlay window failed to load dev server:', err);
+        }
+      });
+    };
+    loadOverlay();
   } else {
     const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     mainWindow.loadURL(url.pathToFileURL(distPath).href + '#/overlay');
@@ -161,12 +173,17 @@ function createCaptureWindow(): void {
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/capture';
-    captureWindow.loadURL(devUrl).catch((err) => {
-      console.warn('Capture window initial loadURL failed, retrying in 1s:', err);
-      setTimeout(() => {
-        captureWindow?.loadURL(devUrl);
-      }, 1000);
-    });
+    const loadCapture = (retries = 6) => {
+      if (!captureWindow || captureWindow.isDestroyed()) return;
+      captureWindow.loadURL(devUrl).catch((err) => {
+        if (retries > 0) {
+          setTimeout(() => loadCapture(retries - 1), 800);
+        } else {
+          console.warn('[Main] Capture window failed to load dev server:', err);
+        }
+      });
+    };
+    loadCapture();
   } else {
     const distPath = path.join(__dirname, '../dist/MeetVisionAI/browser/index.html');
     captureWindow.loadURL(url.pathToFileURL(distPath).href + '#/capture');
@@ -333,32 +350,44 @@ function registerHotkeys(): void {
       mainWindow.setIgnoreMouseEvents(true);
     }
   });
+
+  // Quit application shortcut
+  globalShortcut.register('CommandOrControl+Shift+Q', () => {
+    console.log('[Hotkey] CommandOrControl+Shift+Q triggered -> Quitting application');
+    isQuitting = true;
+    app.quit();
+  });
 }
 
-function generateAnswerForQuestion(question: Question, mode: 'short' | 'detailed' | 'simple' = 'short'): void {
+function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void {
+  const settings = storeService.getSettings();
+  const answerMode: AnswerMode = mode || settings.answerMode || 'short';
+
   question.status = 'answering';
   questionsMap.set(question.id, question);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, question);
   }
 
-  const settings = storeService.getSettings();
   const relevantSnippets = knowledgeService.retrieveRelevantSnippets(question.text);
 
   llmService.generateAnswerStream(
     question,
     recentTranscript,
     {
-      mode,
+      mode: answerMode,
       profile: storeService.getContextProfile(),
-      apiKey: storeService.getDecryptedAnthropicKey(),
+      providerId: settings.llmProvider,
+      apiKey: storeService.getDecryptedApiKey(settings.llmProvider),
       model: settings.llmModel,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
+      thinkingEnabled: Boolean(settings.llmThinkingEnabled),
+      codeLanguage: settings.codeLanguage,
       knowledgeSnippets: relevantSnippets,
     },
     (chunk) => {
-      if (chunk.isFinal && question.answer) {
+      if (chunk.isComplete && question.answer) {
         question.status = 'answered';
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -595,11 +624,12 @@ function registerIpcHandlers(): void {
   // Answer Question (Voice / UI Manual Trigger)
   ipcMain.handle(
     IPC_CHANNELS.QUESTION_ANSWER,
-    async (_event, payload?: string | { questionId?: string; text?: string; speaker?: string }) => {
+    async (_event, payload?: string | AnswerQuestionPayload) => {
       let targetQuestion: Question | undefined;
       const questionId = typeof payload === 'string' ? payload : payload?.questionId;
       const segmentText = typeof payload === 'object' ? payload?.text?.trim() : undefined;
       const segmentSpeaker = typeof payload === 'object' ? payload?.speaker : undefined;
+      const requestedMode = typeof payload === 'object' ? payload?.mode : undefined;
 
       if (questionId) {
         targetQuestion = questionsMap.get(questionId);
@@ -638,7 +668,7 @@ function registerIpcHandlers(): void {
       }
 
       if (targetQuestion) {
-        generateAnswerForQuestion(targetQuestion);
+        generateAnswerForQuestion(targetQuestion, requestedMode);
         return true;
       }
       return false;
@@ -662,30 +692,14 @@ function registerIpcHandlers(): void {
     return storeService.getSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: AppSettings) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: Partial<AppSettings>) => {
     const updated = storeService.updateSettings(newSettings);
     await sttService.applySettings(updated);
-
-    const activeModel = sttService.getModelName();
-    const activeProvider = sttService.getProviderName();
 
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send(IPC_CHANNELS.SETTINGS_CHANGED, updated);
       }
-    }
-
-    // Broadcast a system segment in the live transcript stream so user sees the exact model switch
-    if (sttService.isActive()) {
-      const modelLabel = activeModel ? `${activeProvider} • ${activeModel}` : activeProvider;
-      handleTranscriptSegment({
-        id: `model-switch-${Date.now()}`,
-        speaker: 'System',
-        text: `[Active Speech-to-Text Model: ${modelLabel}]`,
-        startMs: 0,
-        endMs: 0,
-        isFinal: true,
-      });
     }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -849,9 +863,49 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.PARAKEET_MODEL_REVEAL,
+    async (_event, modelId: ParakeetModelType): Promise<boolean> => {
+      try {
+        const filePath = sttService.parakeetEngine.revealModelInFolder(modelId);
+        if (filePath) {
+          shell.showItemInFolder(filePath);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.warn('[Main] Parakeet model reveal error:', err);
+        return false;
+      }
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.PARAKEET_MODEL_PAUSE, async (): Promise<boolean> => {
+    try {
+      return sttService.parakeetEngine.pauseDownload();
+    } catch (err) {
+      console.warn('[Main] Parakeet pause download error:', err);
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.PARAKEET_MODEL_CANCEL, async (): Promise<boolean> => {
+    try {
+      return sttService.parakeetEngine.cancelDownload();
+    } catch (err) {
+      console.warn('[Main] Parakeet cancel download error:', err);
+      return false;
+    }
+  });
+
   // Pluggable STT Engines
   ipcMain.handle(IPC_CHANNELS.STT_ENGINES_GET, async () => {
     return sttService.getEngines();
+  });
+
+  // Pluggable LLM Providers
+  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDERS_GET, async () => {
+    return LLM_PROVIDERS.map((p) => ({ ...p }));
   });
 
   // macOS Permissions
@@ -914,8 +968,8 @@ app.whenReady().then(() => {
     return permission === 'media' || (permission as string) === 'display-capture';
   });
 
-  // Configure loopback audio capture permission handler
-  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+  // Configure loopback audio capture permission handler (Windows & macOS)
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     let callbackCalled = false;
     const safeCallback = (streams: Parameters<typeof callback>[0]) => {
       if (!callbackCalled) {
@@ -929,17 +983,18 @@ app.whenReady().then(() => {
     };
 
     try {
-      if (process.platform === 'win32') {
+      // Both Windows and macOS require a screen video source when providing loopback audio to getDisplayMedia
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      if (sources && sources.length > 0) {
         safeCallback({
+          video: sources[0],
           audio: 'loopback',
         });
         return;
       }
 
-      // On macOS and other platforms, loopback string is not supported directly in getDisplayMedia.
-      // Calling callback with empty streams rejects getDisplayMedia cleanly,
-      // allowing capture window to fall back to getUserMedia (microphone / BlackHole).
-      safeCallback({});
+      // Fallback if screen enumeration returned empty
+      safeCallback({ audio: 'loopback' });
     } catch (err) {
       console.warn('[Main] setDisplayMediaRequestHandler error:', err);
       safeCallback({});

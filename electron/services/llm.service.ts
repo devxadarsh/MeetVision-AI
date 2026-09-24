@@ -1,12 +1,18 @@
-import { Question, AnswerChunk, ContextProfile } from '@shared/ipc';
+import { Question, AnswerChunk, ContextProfile, CodeLanguage } from '@shared/ipc';
+import { DEFAULT_LLM_PROVIDER, LlmProviderId, getLlmProviderLabel } from '@shared/llm-provider-catalog';
+import { LlmRegistry } from './llm/llm-registry';
+import { LlmProviderRequest, LlmStreamResult } from './llm/llm-provider.interface';
 
 export interface LlmStreamOptions {
   mode?: 'short' | 'detailed' | 'simple';
   profile?: ContextProfile;
   apiKey?: string;
+  providerId?: LlmProviderId;
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  thinkingEnabled?: boolean;
+  codeLanguage?: CodeLanguage;
   knowledgeSnippets?: { title: string; snippet: string }[];
 }
 
@@ -20,16 +26,110 @@ export interface ILlmService {
   getProviderName(): string;
 }
 
-export class LlmService implements ILlmService {
-  private providerName = 'Local Streaming Engine';
+interface BuiltPrompts {
+  systemPrompt: string;
+  userPrompt: string;
+}
 
-  constructor() {
-    if (process.env.ANTHROPIC_API_KEY) {
-      this.providerName = 'Anthropic Claude';
-    } else if (process.env.GEMINI_API_KEY) {
-      this.providerName = 'Google Gemini';
-    }
-  }
+const STREAM_TIMEOUT_MS = 45000;
+
+type AnswerMode = 'short' | 'detailed' | 'simple';
+
+/**
+ * Question intent. The intent selects the answer's structure and a base token
+ * budget, so a system-design or coding question is not forced into talking-point
+ * bullets.
+ */
+type AnswerIntent = 'talking-points' | 'design' | 'coding';
+
+/** Per-mode guidance for talking-point answers. */
+const MODE_INSTRUCTIONS: Record<AnswerMode, { bullets: string; style: string }> = {
+  short: {
+    bullets: '3 bullet points',
+    style: 'Keep each bullet to one tight line (about 15 words) and lead with the single most useful fact.',
+  },
+  detailed: {
+    bullets: '5 to 7 bullet points',
+    style:
+      'Include concrete specifics such as numbers, names, ordered steps, trade-offs, and a short example or caveat where it helps.',
+  },
+  simple: {
+    bullets: '2 to 3 bullet points',
+    style:
+      'Use plain, everyday language and short sentences. Avoid jargon and unexplained acronyms; if a term is needed, explain it in a few words.',
+  },
+};
+
+const INTENT_KEYWORDS: Record<'coding' | 'design', string[]> = {
+  coding: [
+    'array', 'string', 'linked list', 'tree', 'graph', 'dynamic programming', 'dp',
+    'binary search', 'sort', 'sorting', 'complexity', 'big o', 'leetcode', 'write a function',
+    'implement', 'algorithm', 'recursion', 'recursive', 'hashmap', 'hash map', 'stack', 'queue',
+    'heap', 'regex', 'debug', 'compile', 'syntax error', 'time limit', 'two pointer',
+    'sliding window', 'bfs', 'dfs', 'trie', 'memoization', 'greedy',
+  ],
+  design: [
+    'design', 'architect', 'architecture', 'system design', 'scal', 'throughput', 'latency',
+    'trade-off', 'tradeoff', 'microservice', 'database', 'schema', 'cache', 'load balanc',
+    'kafka', 'redis', 'queue', 'sharding', 'partition', 'consistency', 'availability',
+    'cap theorem', 'cdn', 'rate limit', 'api gateway', 'deploy', 'migration', 'capacity',
+    'fault toleran', 'message broker', 'service mesh', 'high availability', 'replication',
+  ],
+};
+
+/** Base output-token ceiling per intent; the mode scales it up or down. */
+const INTENT_BASE_TOKENS: Record<AnswerIntent, number> = {
+  'talking-points': 500,
+  design: 1300,
+  coding: 1000,
+};
+
+const MODE_TOKEN_FACTOR: Record<AnswerMode, number> = { short: 0.8, simple: 0.65, detailed: 1.3 };
+
+const HARD_TOKEN_CEILING = 1800;
+const MIN_TOKEN_FLOOR = 300;
+
+const CODE_LANGUAGE_LABELS: Record<CodeLanguage, string> = {
+  auto: 'Auto',
+  python: 'Python',
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  java: 'Java',
+  cpp: 'C++',
+  csharp: 'C#',
+  go: 'Go',
+  rust: 'Rust',
+};
+
+/** Scores the question text and picks an answer intent. */
+export function classifyQuestion(text: string): AnswerIntent {
+  const haystack = (text || '').toLowerCase();
+  const score = (words: string[]) => words.reduce((n, w) => (haystack.includes(w) ? n + 1 : n), 0);
+
+  const coding = score(INTENT_KEYWORDS.coding);
+  const design = score(INTENT_KEYWORDS.design);
+
+  if (coding === 0 && design === 0) return 'talking-points';
+  if (coding >= design) return 'coding';
+  return 'design';
+}
+
+/** Dynamic output-token ceiling: intent base × mode factor, floored at the user's setting. */
+export function tokensFor(intent: AnswerIntent, mode: AnswerMode, userCeiling?: number): number {
+  const base = Math.round(INTENT_BASE_TOKENS[intent] * MODE_TOKEN_FACTOR[mode]);
+  const userFloor = Math.min(Math.max(userCeiling || 0, MIN_TOKEN_FLOOR), HARD_TOKEN_CEILING);
+  return Math.max(Math.min(base, HARD_TOKEN_CEILING), userFloor);
+}
+
+/**
+ * Provider-agnostic LLM facade. Classifies the question, selects a matching
+ * prompt/token budget, then streams the answer through the chosen provider.
+ * Falls back to the offline local generator when a cloud provider is
+ * unconfigured or errors.
+ */
+export class LlmService implements ILlmService {
+  private readonly registry = new LlmRegistry();
+  private providerName = getLlmProviderLabel(DEFAULT_LLM_PROVIDER);
 
   getProviderName(): string {
     return this.providerName;
@@ -46,51 +146,91 @@ export class LlmService implements ILlmService {
     onChunk: (chunk: AnswerChunk) => void
   ): Promise<void> {
     const mode = options.mode || 'short';
-    const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
+    const intent = classifyQuestion(question.text);
+    const { systemPrompt, userPrompt } = this.buildPrompts(question, recentTranscript, options, intent);
 
-    if (apiKey) {
-      try {
-        await this.streamAnthropic(question, recentTranscript, options, apiKey, onChunk);
-        return;
-      } catch (err) {
-        console.warn('[LlmService] Anthropic API call failed, falling back to local generator:', err);
-      }
+    const requestedId = options.providerId || DEFAULT_LLM_PROVIDER;
+    let provider = this.registry.get(requestedId);
+
+    if (!provider) {
+      console.warn(`[LlmService] Unknown provider "${requestedId}", using local generator.`);
+      provider = this.registry.get('local');
     }
 
-    // Fallback or default: intelligent local streaming generator with Context Profile
-    await this.streamLocalGenerator(question, options, onChunk);
+    if (provider && provider.requiresApiKey && !options.apiKey) {
+      console.warn(`[LlmService] No API key for "${provider.id}", using local generator.`);
+      provider = this.registry.get('local');
+    }
+
+    const request: LlmProviderRequest = {
+      question: question.text,
+      recentTranscript,
+      systemPrompt,
+      userPrompt,
+      mode,
+      profile: options.profile,
+      knowledgeSnippets: options.knowledgeSnippets,
+      model: options.model || 'deepseek-flash',
+      temperature: typeof options.temperature === 'number' ? options.temperature : 0.3,
+      maxTokens: tokensFor(intent, mode, options.maxTokens),
+      apiKey: options.apiKey,
+      thinkingEnabled: options.thinkingEnabled,
+    };
+
+    const emit = (text: string) => onChunk({ questionId: question.id, delta: text, mode });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+
+    try {
+      const result = await provider!.streamAnswer({ ...request, signal: controller.signal }, emit);
+      this.emitComplete(question.id, mode, result, onChunk);
+    } catch (err) {
+      console.warn(`[LlmService] Provider "${provider?.id}" failed, falling back to local generator:`, err);
+      const fallback = this.registry.get('local');
+      if (fallback) {
+        const result = await fallback.streamAnswer({ ...request, signal: undefined }, emit);
+        this.emitComplete(question.id, mode, result, onChunk);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
-  private async streamAnthropic(
+  private emitComplete(
+    questionId: string,
+    mode: 'short' | 'detailed' | 'simple',
+    result: LlmStreamResult | void,
+    onChunk: (chunk: AnswerChunk) => void
+  ): void {
+    const finish = result?.finishReason;
+    onChunk({
+      questionId,
+      delta: '',
+      isComplete: true,
+      mode,
+      code: result?.code,
+      truncated: finish === 'length' || finish === 'max_tokens',
+    });
+  }
+
+  private buildPrompts(
     question: Question,
     recentTranscript: string[],
     options: LlmStreamOptions,
-    apiKey: string,
-    onChunk: (chunk: AnswerChunk) => void
-  ): Promise<void> {
+    intent: AnswerIntent
+  ): BuiltPrompts {
     const mode = options.mode || 'short';
     const profile = options.profile;
-    const model = options.model || 'claude-3-5-sonnet-20241022';
-    const temperature = typeof options.temperature === 'number' ? options.temperature : 0.3;
-    const maxTokens = options.maxTokens || 500;
+    const tone = profile?.tone || 'concise';
 
-    const rolePrompt = profile?.role ? `User Role: ${profile.role}.\n` : '';
-    const projectPrompt = profile?.projectSummary ? `Project Context: ${profile.projectSummary}\n` : '';
-    const glossaryPrompt = profile?.glossary?.length
-      ? `Domain Glossary: ${profile.glossary.join(', ')}.\n`
-      : '';
-    const tonePrompt = profile?.tone ? `Tone: ${profile.tone.toUpperCase()}.\n` : '';
-
-    const systemPrompt = `You are MeetVision AI, an expert meeting assistant providing concise talking points to the user in real time.
-${rolePrompt}${projectPrompt}${glossaryPrompt}${tonePrompt}
-Mode: ${mode.toUpperCase()}.
-Formatting rules:
-- Provide 3 to 5 concise bullet points.
-- Tailor the depth and perspective to the user's role and domain context.
-- Maintain the specified tone (${profile?.tone || 'concise'}).
-- Each bullet point must begin with "• ".
-- If the question asks for code or syntax, include a short code block at the end.
-- Do not include greetings, pleasantries, or markdown headers.`;
+    const contextBlock = [
+      profile?.role ? `User Role: ${profile.role}.` : '',
+      profile?.projectSummary ? `Project Context: ${profile.projectSummary}` : '',
+      profile?.glossary?.length ? `Domain Glossary: ${profile.glossary.join(', ')}.` : '',
+      profile?.tone ? `Tone: ${profile.tone.toUpperCase()}.` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     const knowledgeText =
       options.knowledgeSnippets && options.knowledgeSnippets.length > 0
@@ -104,216 +244,60 @@ Formatting rules:
         ? `Recent meeting context:\n${recentTranscript.join('\n')}\n\n`
         : '';
 
-    const userPrompt = `${knowledgeText}${contextText}Question asked: "${question.text}"`;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    let response: Response;
-    try {
-      response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          temperature,
-          system: systemPrompt,
-          stream: true,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!response.ok || !response.body) {
-      throw new Error(`Anthropic API returned ${response.status}: ${response.statusText}`);
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6).trim();
-          if (dataStr === '[DONE]') continue;
-          try {
-            const data = JSON.parse(dataStr);
-            if (data.type === 'content_block_delta' && data.delta?.text) {
-              onChunk({
-                questionId: question.id,
-                delta: data.delta.text,
-                mode,
-              });
-            }
-          } catch {
-            // Ignore partial stream line parsing
-          }
-        }
-      }
-    }
-
-    onChunk({
-      questionId: question.id,
-      delta: '',
-      isComplete: true,
-      mode,
-    });
+    return {
+      systemPrompt: this.systemPromptFor(intent, mode, contextBlock, tone, options.codeLanguage),
+      userPrompt: `${knowledgeText}${contextText}Question asked: "${question.text}"`,
+    };
   }
 
-  private async streamLocalGenerator(
-    question: Question,
-    options: LlmStreamOptions,
-    onChunk: (chunk: AnswerChunk) => void
-  ): Promise<void> {
-    const mode = options.mode || 'short';
-    const profile = options.profile;
-    const tone = profile?.tone || 'concise';
-    const rolePrefix = profile?.role ? `[${profile.role}] ` : '';
+  private systemPromptFor(
+    intent: AnswerIntent,
+    mode: AnswerMode,
+    contextBlock: string,
+    tone: string,
+    codeLanguage?: CodeLanguage
+  ): string {
+    const context = contextBlock ? `\n${contextBlock}\n` : '';
 
-    const text = question.text.toLowerCase();
-    let bullets: string[] = [];
-    let code: string | undefined;
+    if (intent === 'coding') {
+      const language = codeLanguage || 'auto';
+      const fence = language === 'auto' ? '' : language;
+      const languageRule =
+        language === 'auto'
+          ? 'Choose the most widely expected language for the question and state it (prefer Python unless the question names a language).'
+          : `Write the solution in ${CODE_LANGUAGE_LABELS[language]}.`;
 
-    // Milestone 7: Prioritize Local Knowledge Base (RAG) Snippets if matched
-    if (options.knowledgeSnippets && options.knowledgeSnippets.length > 0) {
-      const top = options.knowledgeSnippets[0];
-      const lines = top.snippet
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 15);
-
-      if (lines.length >= 2) {
-        bullets = [
-          `${rolePrefix}[Doc: ${top.title}] ${lines[0]}`,
-          ...lines.slice(1, 4),
-        ];
-      }
+      return `You are MeetVision AI, a senior engineer answering a CODING / DSA question in real time.${context}
+Respond in this exact order:
+- Approach: 2-4 bullets (each beginning with "• ") explaining the algorithm and why it works.
+- Code: exactly ONE complete, runnable solution inside a single fenced block, e.g. \`\`\`${fence} ... \`\`\`. Do not split the solution across multiple blocks and do not use pseudo-code.
+- Complexity: one line, "Time: O(...) | Space: O(...)".
+- Edge cases: 2-4 bullets.
+${languageRule}
+Maintain a ${tone} tone. No greetings or filler.`;
     }
 
-    if (bullets.length === 0 && (text.includes('retry') || text.includes('payment') || text.includes('504'))) {
-      if (tone === 'formal') {
-        bullets = [
-          `${rolePrefix}The payment pipeline employs exponential backoff with full randomized jitter to avoid thundering herd contention.`,
-          'Initial retry interval is configured at 500ms with a 2.0x exponent, capped at 4,000ms across 3 attempts.',
-          'Execution is strictly limited to idempotent HTTP status codes (500, 502, 503, 504) and transient network disconnects.',
-          'Circuit breaker initiates an open state upon 5 consecutive failures, adhering to a 30-second verification probe window.',
-        ];
-      } else if (tone === 'friendly') {
-        bullets = [
-          `${rolePrefix}Great news—the payment retry flow is fully automated so customers won't get double billed!`,
-          'It retries up to 3 times with exponential backoff (500ms up to 4s) so servers have time to breathe.',
-          'Only safe server errors are retried; if anything is off on the client side, it fails fast cleanly.',
-          'Our circuit breaker pauses traffic for 30 seconds if an upstream gateway starts misbehaving.',
-        ];
-      } else {
-        // concise
-        bullets = [
-          `${rolePrefix}Three retries with jittered exponential backoff: 500ms base, 4s max cap.`,
-          'Only retryable server errors (500, 502, 503, 504) are retried; client 4xx errors fail immediately.',
-          'Circuit breaker trips after 5 consecutive failures with a 30-second cooldown.',
-        ];
-        code = 'retry({ count: 3, delay: (err, i) => Math.min(500 * 2 ** i, 4000) })';
-      }
-    } else if (text.includes('migration') || text.includes('rollout') || text.includes('canary')) {
-      if (tone === 'formal') {
-        bullets = [
-          `${rolePrefix}Phase 1 internal alpha evaluation completed with 0 recorded anomalies across 48 operational hours.`,
-          'Phase 2 involves a 10% canary traffic cohort deployment initiating Tuesday 09:00 UTC under automated telemetry alarms.',
-          'Automated monitoring thresholds are calibrated to p99 latency (>250ms) and 5xx error rate (>0.1%).',
-          'Phase 4 full production cutover is scheduled for Monday with zero planned maintenance downtime.',
-        ];
-      } else if (tone === 'friendly') {
-        bullets = [
-          `${rolePrefix}Rollout is tracking super smoothly! Phase 1 internal testing is already 100% green.`,
-          'We begin a gentle 10% canary test this Tuesday morning to verify real-world behavior.',
-          'By Thursday we expand to 50%, and wrap up full cutover next Monday without any downtime.',
-        ];
-      } else {
-        bullets = [
-          `${rolePrefix}Phase 1 internal alpha completed and verified.`,
-          'Phase 2: 10% canary cohort rollout starting Tuesday 09:00 UTC.',
-          'Phase 3: 50% on Thursday after monitoring p99 latency and error rates.',
-          'Phase 4: Full cutover next Monday with automated rollback triggers.',
-        ];
-      }
-    } else if (text.includes('kyc') || text.includes('timeout') || text.includes('fallback')) {
-      if (tone === 'formal') {
-        bullets = [
-          `${rolePrefix}In the event of verification gateway latency, payloads transition to an asynchronous resilient queue.`,
-          'A background verification poll executes with a strict 2-minute SLA guarantee.',
-          'Users are granted provisional non-sensitive authorization pending final credential resolution.',
-        ];
-      } else {
-        bullets = [
-          `${rolePrefix}Enqueue customer verification into an asynchronous processing queue.`,
-          'Issue a background webhook check with a 2-minute SLA guarantee.',
-          'Grant immediate partial access while background verification resolves.',
-        ];
-      }
-    } else {
-      // General question using context profile
-      const glossarySnippet = profile?.glossary?.length
-        ? `Aligns with domain parameters: ${profile.glossary.slice(0, 3).join(', ')}.`
-        : 'Aligned with production architecture guidelines.';
-
-      if (tone === 'formal') {
-        bullets = [
-          `${rolePrefix}Directly addresses requirements regarding "${question.text.replace(/\?$/, '')}".`,
-          glossarySnippet,
-          'Validated against current infrastructure constraints with zero regression exposure.',
-        ];
-      } else if (tone === 'friendly') {
-        bullets = [
-          `${rolePrefix}Here is the key takeaway on "${question.text.replace(/\?$/, '')}":`,
-          glossarySnippet,
-          'We have verified this in our staging setup and are ready to proceed with confidence.',
-        ];
-      } else {
-        bullets = [
-          `${rolePrefix}Direct response for ${question.text.replace(/\?$/, '')}.`,
-          glossarySnippet,
-          'Production-tested pattern with minimal regression risk.',
-        ];
-      }
+    if (intent === 'design') {
+      return `You are MeetVision AI, a senior software architect answering a SYSTEM DESIGN question in real time.${context}
+Respond in short labelled sections:
+- Overview: 1-2 sentences.
+- Key components: 3-5 bullets (each beginning with "• ").
+- Data flow: how a request moves through the system, 2-4 bullets.
+- Trade-offs: consistency vs availability, cost, and scaling, 2-4 bullets.
+- Risks & edge cases: 2-4 bullets.
+Add at most ONE fenced code or schema block (\`\`\`lang ... \`\`\`) if it materially helps.
+Be concrete and specific with real numbers or named technologies where possible. Maintain a ${tone} tone. No greetings or filler.`;
     }
 
-    const fullText = bullets.map((b) => `• ${b}`).join('\n');
-    const words = fullText.split(' ');
-
-    for (let i = 0; i < words.length; i++) {
-      const delta = (i === 0 ? '' : ' ') + words[i];
-      onChunk({
-        questionId: question.id,
-        delta,
-        mode,
-        code: i === words.length - 1 ? code : undefined,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 35));
-    }
-
-    onChunk({
-      questionId: question.id,
-      delta: '',
-      isComplete: true,
-      mode,
-      code,
-    });
+    const modeSpec = MODE_INSTRUCTIONS[mode];
+    return `You are MeetVision AI, an expert meeting assistant providing real-time talking points.${context}
+Answer depth: ${mode.toUpperCase()} — provide ${modeSpec.bullets}.
+Style:
+- ${modeSpec.style}
+- Tailor the depth and perspective to the user's role and domain context.
+- Maintain the specified tone (${tone}).
+- Each bullet point must begin with "• ".
+- Lead with the direct answer. No greetings, filler, or markdown headers.
+- If the question asks for code or syntax, include a short fenced code block at the end.`;
   }
 }
