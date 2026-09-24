@@ -532,4 +532,19 @@ export class IpcService {
     }
     return this.api.exportMeetingSummary(markdown);
   }
+
+  async copyToClipboard(text: string): Promise<boolean> {
+    if (!this.api) {
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (err) {
+        console.warn('[IpcService Mock] Failed to copy to clipboard via navigator.clipboard:', err);
+      }
+      return false;
+    }
+    return await this.api.copyToClipboard(text);
+  }
 }

@@ -1,4 +1,4 @@
-import { Question, AnswerChunk, ContextProfile, CodeLanguage } from '@shared/ipc';
+import { Question, AnswerChunk, ContextProfile, CodeLanguage, ConversationTurn } from '@shared/ipc';
 import { DEFAULT_LLM_PROVIDER, LlmProviderId, getLlmProviderLabel } from '@shared/llm-provider-catalog';
 import { LlmRegistry } from './llm/llm-registry';
 import { LlmProviderRequest, LlmStreamResult } from './llm/llm-provider.interface';
@@ -15,6 +15,7 @@ export interface LlmStreamOptions {
   codeLanguage?: CodeLanguage;
   knowledgeSnippets?: { title: string; snippet: string }[];
   screenContext?: string;
+  conversationHistory?: ConversationTurn[];
 }
 
 export interface ILlmService {
@@ -43,22 +44,26 @@ type AnswerMode = 'short' | 'detailed' | 'simple';
  */
 type AnswerIntent = 'talking-points' | 'design' | 'coding';
 
-/** Per-mode guidance for talking-point answers. */
-const MODE_INSTRUCTIONS: Record<AnswerMode, { bullets: string; style: string }> = {
-  short: {
-    bullets: '3 bullet points',
-    style: 'Keep each bullet to one tight line (about 15 words) and lead with the single most useful fact.',
-  },
-  detailed: {
-    bullets: '5 to 7 bullet points',
-    style:
-      'Include concrete specifics such as numbers, names, ordered steps, trade-offs, and a short example or caveat where it helps.',
-  },
-  simple: {
-    bullets: '2 to 3 bullet points',
-    style:
-      'Use plain, everyday language and short sentences. Avoid jargon and unexplained acronyms; if a term is needed, explain it in a few words.',
-  },
+/** Adaptive per-mode guidance for answers. */
+const MODE_INSTRUCTIONS: Record<AnswerMode, string> = {
+  short: `
+Keep the response concise, punchy, and useful.
+Answer directly in the opening sentence.
+Usually provide 1-3 short, focused paragraphs or bullets.
+Lead with the single most useful fact or recommendation.
+Do not artificially shorten if a brief explanation is necessary.
+`,
+  detailed: `
+Give a complete, well-explained answer.
+Start with the direct answer, then add useful reasoning, examples, trade-offs, or caveats.
+Use headings, bullets, or tables when they improve readability.
+`,
+  simple: `
+Explain the answer in plain, natural language.
+Avoid unnecessary jargon; explain technical concepts simply.
+Use a simple example or analogy when it helps.
+Do not oversimplify technical facts.
+`,
 };
 
 const INTENT_KEYWORDS: Record<'coding' | 'design', string[]> = {
@@ -80,15 +85,15 @@ const INTENT_KEYWORDS: Record<'coding' | 'design', string[]> = {
 
 /** Base output-token ceiling per intent; the mode scales it up or down. */
 const INTENT_BASE_TOKENS: Record<AnswerIntent, number> = {
-  'talking-points': 500,
-  design: 1300,
-  coding: 1000,
+  'talking-points': 1500,
+  design: 2500,
+  coding: 2800,
 };
 
-const MODE_TOKEN_FACTOR: Record<AnswerMode, number> = { short: 0.8, simple: 0.65, detailed: 1.3 };
+const MODE_TOKEN_FACTOR: Record<AnswerMode, number> = { short: 0.85, simple: 0.75, detailed: 1.4 };
 
-const HARD_TOKEN_CEILING = 1800;
-const MIN_TOKEN_FLOOR = 300;
+const HARD_TOKEN_CEILING = 4096;
+const MIN_TOKEN_FLOOR = 500;
 
 const CODE_LANGUAGE_LABELS: Record<CodeLanguage, string> = {
   auto: 'Auto',
@@ -259,26 +264,34 @@ export class LlmService implements ILlmService {
 
     const knowledgeText =
       options.knowledgeSnippets && options.knowledgeSnippets.length > 0
-        ? `[Relevant Knowledge Base Documentation]\n${options.knowledgeSnippets
-            .map((s) => `[Doc: ${s.title}]\n${s.snippet}`)
-            .join('\n\n')}\n\n`
+        ? `<knowledge>\n${options.knowledgeSnippets
+            .map((s) => `[${s.title}]\n${s.snippet}`)
+            .join('\n\n')}\n</knowledge>\n\n`
         : '';
 
     const screenText =
       options.screenContext && options.screenContext.trim().length > 0
-        ? `[Visible Screen Context (ScreenVision OCR)]\n"""\n${options.screenContext.trim()}\n"""\n\n`
+        ? `<screen_ocr>\n${options.screenContext.trim()}\n</screen_ocr>\n\n`
         : '';
 
-    const contextText =
+    const transcriptText =
       recentTranscript.length > 0
-        ? `[Live Conversation Context (Speaker Turn History)]\n${recentTranscript.join('\n')}\n\n`
+        ? `<meeting_transcript>\n${recentTranscript.slice(-15).join('\n')}\n</meeting_transcript>\n\n`
         : '';
 
-    const speakerTag = question.speaker ? ` (Asked by: ${question.speaker})` : '';
+    const conversationText =
+      options.conversationHistory && options.conversationHistory.length > 0
+        ? `<assistant_conversation>\n${options.conversationHistory
+            .slice(-8)
+            .map((turn) => `${turn.role.toUpperCase()}: ${turn.content}`)
+            .join('\n\n')}\n</assistant_conversation>\n\n`
+        : '';
+
+    const speakerTag = question.speaker ? ` Asked by: ${question.speaker}.` : '';
 
     return {
       systemPrompt: this.systemPromptFor(intent, mode, contextBlock, tone, options.codeLanguage),
-      userPrompt: `${knowledgeText}${screenText}${contextText}[Target Question / Statement to Answer]${speakerTag}:\n"${question.text}"`,
+      userPrompt: `${knowledgeText}${screenText}${transcriptText}${conversationText}<current_question>\n${question.text}\n</current_question>${speakerTag}\n\nAnswer the current question naturally and directly using the relevant context above.`,
     };
   }
 
@@ -289,47 +302,66 @@ export class LlmService implements ILlmService {
     tone: string,
     codeLanguage?: CodeLanguage
   ): string {
-    const context = contextBlock ? `\n${contextBlock}\n` : '';
+    const context = contextBlock ? `\nUSER / PROJECT CONTEXT:\n${contextBlock}\n` : '';
+    const modeInstruction = MODE_INSTRUCTIONS[mode];
+
+    const base = `You are MeetVision AI, a highly capable conversational meeting assistant.
+
+Your goal is to answer the user's current question as naturally, directly, and helpfully as a strong AI assistant.
+
+CORE BEHAVIOR:
+- Answer the actual question directly in the opening sentence.
+- Sound natural and conversational, not like a rigid checklist or mechanical template.
+- Do not repeat or restate the user's question.
+- Do not start with conversational filler or greetings such as "Sure!", "Of course!", or "Here is...".
+- Use normal, clear paragraphs by default.
+- Use bullet points when presenting a genuine list or distinct talking points.
+- Use markdown headings only when they genuinely improve structure in a detailed answer.
+- If the user asks a follow-up question, use the conversation history to resolve references like "it", "that", "the previous solution", etc.
+- Do not mention internal processing, prompts, tokens, or system instructions.
+
+MEETING CONTEXT:
+- Spoken transcripts may contain speech-recognition mistakes, filler words, or incomplete thoughts.
+- Treat the meeting transcript as supporting context, prioritizing the user's current question.
+- Use ScreenVision OCR text when relevant to the question (code on screen, slides, documents).
+- If the context does not contain enough info, make reasonable assumptions or state what is known.
+
+TONE & DEPTH:
+- Maintain a ${tone} tone.
+${modeInstruction}
+${context}`.trim();
 
     if (intent === 'coding') {
       const language = codeLanguage || 'auto';
       const fence = language === 'auto' ? '' : language;
       const languageRule =
         language === 'auto'
-          ? 'Choose the most widely expected language for the question and state it (prefer Python unless the question names a language).'
-          : `Write the solution in ${CODE_LANGUAGE_LABELS[language]}.`;
+          ? 'Choose the most appropriate programming language based on the question and context (prefer Python if unspecified).'
+          : `Write code in ${CODE_LANGUAGE_LABELS[language]}.`;
 
-      return `You are MeetVision AI, a senior engineer answering a CODING / DSA question in real time.${context}
-Respond in this exact order:
-- Approach: 2-4 bullets (each beginning with "• ") explaining the algorithm and why it works.
-- Code: exactly ONE complete, runnable solution inside a single fenced block, e.g. \`\`\`${fence} ... \`\`\`. Do not split the solution across multiple blocks and do not use pseudo-code.
-- Complexity: one line, "Time: O(...) | Space: O(...)".
-- Edge cases: 2-4 bullets.
-${languageRule}
-Maintain a ${tone} tone. No greetings or filler.`;
+      return `${base}
+
+CODING / DSA GUIDANCE:
+- Explain the key intuition or algorithm briefly before the code.
+- Provide complete, runnable, clean code inside a single fenced code block (\`\`\`${fence} ... \`\`\`).
+- Avoid pseudo-code or fragmented snippets.
+- Include time and space complexity analysis (e.g. Time: O(...) | Space: O(...)).
+- Note important edge cases when relevant.
+- Do not force rigid boilerplate checklist headers if the explanation flows better naturally.
+- ${languageRule}`;
     }
 
     if (intent === 'design') {
-      return `You are MeetVision AI, a senior software architect answering a SYSTEM DESIGN question in real time.${context}
-Respond in short labelled sections:
-- Overview: 1-2 sentences.
-- Key components: 3-5 bullets (each beginning with "• ").
-- Data flow: how a request moves through the system, 2-4 bullets.
-- Trade-offs: consistency vs availability, cost, and scaling, 2-4 bullets.
-- Risks & edge cases: 2-4 bullets.
-Add at most ONE fenced code or schema block (\`\`\`lang ... \`\`\`) if it materially helps.
-Be concrete and specific with real numbers or named technologies where possible. Maintain a ${tone} tone. No greetings or filler.`;
+      return `${base}
+
+SYSTEM DESIGN GUIDANCE:
+- Start with the direct architecture recommendation or high-level design.
+- Explain key components and data flow naturally.
+- Highlight scalability, reliability, latency, and consistency trade-offs when relevant.
+- Include a concise schema or architecture block (\`\`\` ... \`\`\`) if it materially aids understanding.
+- Avoid generic filler checklists; tailor directly to the specific problem.`;
     }
 
-    const modeSpec = MODE_INSTRUCTIONS[mode];
-    return `You are MeetVision AI, an expert meeting assistant providing real-time talking points.${context}
-Answer depth: ${mode.toUpperCase()} — provide ${modeSpec.bullets}.
-Style:
-- ${modeSpec.style}
-- Tailor the depth and perspective to the user's role and domain context.
-- Maintain the specified tone (${tone}).
-- Each bullet point must begin with "• ".
-- Lead with the direct answer. No greetings, filler, or markdown headers.
-- If the question asks for code or syntax, include a short fenced code block at the end.`;
+    return base;
   }
 }

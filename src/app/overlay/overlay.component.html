@@ -527,23 +527,45 @@
                 }
 
                 <!-- Expanded Answer Talking Points -->
-                @if (!isCollapsed(q.id) && q.answer) {
+                @if (!isCollapsed(q.id) && getActiveAnswer(q); as currentAnswer) {
                   <div class="answer-section">
                     <div class="bullets-header">
                       <div class="header-left-meta">
                         <span class="talking-points-label">Talking Points</span>
-                        <span class="mode-tag">{{ q.answer.mode }}</span>
+                        <span class="mode-tag">{{ currentAnswer.mode }}</span>
+
+                        @if (q.answers && q.answers.length > 1) {
+                          <div class="version-pill-group">
+                            @for (ans of q.answers; track $index) {
+                              <button
+                                type="button"
+                                class="version-pill"
+                                [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
+                                (click)="selectAnswerVersion(q, $index, $event)"
+                                [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
+                              >
+                                v{{ $index + 1 }}
+                              </button>
+                            }
+                          </div>
+                        }
                       </div>
                     </div>
 
                     <ul class="bullets-list">
-                      @for (bullet of q.answer.bullets; track $index) {
-                        <li class="bullet-item">
-                          <span class="bullet-dot">•</span>
-                          <span class="bullet-content">{{ bullet }}</span>
-                        </li>
+                      @for (bullet of currentAnswer.bullets; track $index) {
+                        @if (isAnswerHeading(bullet)) {
+                          <li class="bullet-heading-item">
+                            <span class="answer-section-title" [innerHTML]="formatAnswerItem(bullet)"></span>
+                          </li>
+                        } @else {
+                          <li class="bullet-item">
+                            <span class="bullet-dot">•</span>
+                            <span class="bullet-content" [innerHTML]="formatAnswerItem(bullet)"></span>
+                          </li>
+                        }
                       }
-                      @if (q.status === 'answering') {
+                      @if (q.status === 'answering' && (q.activeAnswerIndex === undefined || q.activeAnswerIndex === (q.answers ? q.answers.length - 1 : 0))) {
                         <li class="bullet-item streaming-bullet">
                           <span class="bullet-dot animate-pulse">•</span>
                           <span class="bullet-content italic-muted">Generating talking points...</span>
@@ -551,14 +573,14 @@
                       }
                     </ul>
 
-                    @if (q.answer.code) {
+                    @if (currentAnswer.code) {
                       <div class="code-block">
                         <div class="code-header">Example snippet</div>
-                        <pre><code [innerHTML]="getHighlightedCode(q.answer.code)"></code></pre>
+                        <pre><code [innerHTML]="getHighlightedCode(currentAnswer.code)"></code></pre>
                       </div>
                     }
 
-                    @if (q.answer.truncated) {
+                    @if (currentAnswer.truncated) {
                       <div class="answer-truncated">
                         Answer may be truncated — press Regenerate for a longer version.
                       </div>
@@ -670,9 +692,9 @@
                       </div>
 
                       <div class="seg-body" [class.everyone-row]="transcriptionMode() === 'everyone'">
-                        @if (transcriptionMode() === 'everyone' && seg.turns && seg.turns.length > 0) {
+                        @if (transcriptionMode() === 'everyone') {
                           <div class="turns-container">
-                            @for (turn of seg.turns; track $index) {
+                            @for (turn of getSegmentTurns(seg); track $index) {
                               <div
                                 class="conversation-turn-line"
                                 [class.turn-you]="turn.speaker === 'You'"
@@ -685,31 +707,47 @@
                                 >
                                   {{ turn.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
                                 </span>
-                                <span class="turn-text">{{ turn.text }}</span>
+                                <span class="turn-text">
+                                  {{ formatTurnText(turn.text) }}
+                                  @if (seg.id === activeTranscriptRowId() && isLiveTailOnTurn(seg, turn, $index)) {
+                                    @if (inlineInterimTail()) {
+                                      <span class="seg-text-interim"> {{ inlineInterimTail() }}</span>
+                                    }
+                                    <span class="typing-cursor">▎</span>
+                                  }
+                                </span>
+                              </div>
+                            }
+                            <!-- Live interim line when a new speaker is currently talking -->
+                            @if (seg.id === activeTranscriptRowId() && isNewInterimSpeakerTurn(seg)) {
+                              <div
+                                class="conversation-turn-line live-interim-line"
+                                [class.turn-you]="activeInterimSpeaker() === 'You'"
+                                [class.turn-other]="activeInterimSpeaker() === 'Other'"
+                              >
+                                <span
+                                  class="speaker-chip-badge"
+                                  [class.speaker-other]="activeInterimSpeaker() === 'Other'"
+                                  [class.speaker-you]="activeInterimSpeaker() === 'You'"
+                                >
+                                  {{ activeInterimSpeaker() === 'You' ? 'You:' : 'Other Attendee:' }}
+                                </span>
+                                <span class="turn-text">
+                                  <span class="seg-text-interim">{{ activeInterimText() }}</span>
+                                  <span class="typing-cursor">▎</span>
+                                </span>
                               </div>
                             }
                           </div>
-                        } @else if (transcriptionMode() === 'everyone' && seg.speaker) {
-                          <div class="conversation-turn-line" [class.turn-you]="seg.speaker === 'You'" [class.turn-other]="seg.speaker === 'Other'">
-                            <span
-                              class="speaker-chip-badge"
-                              [class.speaker-other]="seg.speaker === 'Other'"
-                              [class.speaker-you]="seg.speaker === 'You'"
-                            >
-                              {{ seg.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
-                            </span>
-                            <span class="turn-text">{{ seg.text }}</span>
-                          </div>
                         } @else {
                           <span class="seg-text">{{ seg.text }}</span>
-                        }
-
-                        <!-- Live typing tail + cursor on the active row -->
-                        @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
-                          @if (inlineInterimTail()) {
-                            <span class="seg-text-interim"> {{ inlineInterimTail() }}</span>
+                          <!-- Live typing tail + cursor on the active row -->
+                          @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
+                            @if (inlineInterimTail()) {
+                              <span class="seg-text-interim"> {{ inlineInterimTail() }}</span>
+                            }
+                            <span class="typing-cursor">▎</span>
                           }
-                          <span class="typing-cursor">▎</span>
                         }
                       </div>
                     </div>
@@ -735,18 +773,27 @@
                         ⚡ Give Answer
                       </button>
                     </div>
-                    <div class="seg-body">
+                    <div class="seg-body" [class.everyone-row]="transcriptionMode() === 'everyone'">
                       @if (transcriptionMode() === 'everyone' && draft.speaker) {
-                        <span
-                          class="seg-speaker"
-                          [class.speaker-other]="draft.speaker === 'Other'"
-                          [class.speaker-you]="draft.speaker === 'You'"
-                        >{{ draft.speaker }}:</span>
+                        <div class="conversation-turn-line" [class.turn-you]="draft.speaker === 'You'" [class.turn-other]="draft.speaker === 'Other'">
+                          <span
+                            class="speaker-chip-badge"
+                            [class.speaker-other]="draft.speaker === 'Other'"
+                            [class.speaker-you]="draft.speaker === 'You'"
+                          >
+                            {{ draft.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                          </span>
+                          <span class="turn-text">
+                            {{ formatTurnText(draft.text) }}
+                            <span class="typing-cursor">▎</span>
+                          </span>
+                        </div>
+                      } @else {
+                        @if (draft.text) {
+                          <span class="seg-text">{{ draft.text }}</span>
+                        }
+                        <span class="typing-cursor">▎</span>
                       }
-                      @if (draft.text) {
-                        <span class="seg-text">{{ draft.text }}</span>
-                      }
-                      <span class="typing-cursor">▎</span>
                     </div>
                   </div>
                 }
@@ -1418,23 +1465,45 @@
                   }
 
                   <!-- Answer Accordion -->
-                  @if (!isCollapsed(q.id) && q.answer) {
+                  @if (!isCollapsed(q.id) && getActiveAnswer(q); as currentAnswer) {
                     <div class="v2-answer-container">
                       <div class="v2-answer-top-bar">
                         <div class="v2-top-left-meta">
                           <span class="v2-talking-label">TALKING POINTS</span>
-                          <span class="v2-tone-tag">{{ q.answer.mode }}</span>
+                          <span class="v2-tone-tag">{{ currentAnswer.mode }}</span>
+
+                          @if (q.answers && q.answers.length > 1) {
+                            <div class="v2-version-pill-group">
+                              @for (ans of q.answers; track $index) {
+                                <button
+                                  type="button"
+                                  class="v2-version-pill"
+                                  [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
+                                  (click)="selectAnswerVersion(q, $index, $event)"
+                                  [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
+                                >
+                                  v{{ $index + 1 }}
+                                </button>
+                              }
+                            </div>
+                          }
                         </div>
                       </div>
 
                       <ul class="v2-bullet-list">
-                        @for (bullet of q.answer.bullets; track $index) {
-                          <li class="v2-bullet-item">
-                            <span class="v2-bullet-arrow">▸</span>
-                            <span class="v2-bullet-body">{{ bullet }}</span>
-                          </li>
+                        @for (bullet of currentAnswer.bullets; track $index) {
+                          @if (isAnswerHeading(bullet)) {
+                            <li class="v2-bullet-heading-item">
+                              <span class="v2-answer-section-title" [innerHTML]="formatAnswerItem(bullet)"></span>
+                            </li>
+                          } @else {
+                            <li class="v2-bullet-item">
+                              <span class="v2-bullet-arrow">▸</span>
+                              <span class="v2-bullet-body" [innerHTML]="formatAnswerItem(bullet)"></span>
+                            </li>
+                          }
                         }
-                        @if (q.status === 'answering') {
+                        @if (q.status === 'answering' && (q.activeAnswerIndex === undefined || q.activeAnswerIndex === (q.answers ? q.answers.length - 1 : 0))) {
                           <li class="v2-bullet-item streaming">
                             <span class="v2-bullet-arrow pulse">▸</span>
                             <span class="v2-bullet-body stream-text">Synthesizing live talking points...</span>
@@ -1442,14 +1511,14 @@
                         }
                       </ul>
 
-                      @if (q.answer.code) {
+                      @if (currentAnswer.code) {
                         <div class="v2-code-container">
                           <div class="v2-code-label">Example Snippet</div>
-                          <pre><code [innerHTML]="getHighlightedCode(q.answer.code)"></code></pre>
+                          <pre><code [innerHTML]="getHighlightedCode(currentAnswer.code)"></code></pre>
                         </div>
                       }
 
-                      @if (q.answer.truncated) {
+                      @if (currentAnswer.truncated) {
                         <div class="v2-answer-truncated">
                           Answer may be truncated — press Regenerate for a longer version.
                         </div>
@@ -1556,9 +1625,9 @@
                         </div>
 
                         <div class="v2-seg-main" [class.everyone-row]="transcriptionMode() === 'everyone'">
-                          @if (transcriptionMode() === 'everyone' && seg.turns && seg.turns.length > 0) {
+                          @if (transcriptionMode() === 'everyone') {
                             <div class="v2-turns-container">
-                              @for (turn of seg.turns; track $index) {
+                              @for (turn of getSegmentTurns(seg); track $index) {
                                 <div
                                   class="v2-conversation-turn-line"
                                   [class.turn-you]="turn.speaker === 'You'"
@@ -1571,31 +1640,47 @@
                                   >
                                     {{ turn.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
                                   </span>
-                                  <span class="v2-turn-text">{{ turn.text }}</span>
+                                  <span class="v2-turn-text">
+                                    {{ formatTurnText(turn.text) }}
+                                    @if (seg.id === activeTranscriptRowId() && isLiveTailOnTurn(seg, turn, $index)) {
+                                      @if (inlineInterimTail()) {
+                                        <span class="v2-interim-body"> {{ inlineInterimTail() }}</span>
+                                      }
+                                      <span class="v2-cursor-caret">▋</span>
+                                    }
+                                  </span>
+                                </div>
+                              }
+                              <!-- Live interim line when a new speaker is currently talking -->
+                              @if (seg.id === activeTranscriptRowId() && isNewInterimSpeakerTurn(seg)) {
+                                <div
+                                  class="v2-conversation-turn-line live-interim-line"
+                                  [class.turn-you]="activeInterimSpeaker() === 'You'"
+                                  [class.turn-other]="activeInterimSpeaker() === 'Other'"
+                                >
+                                  <span
+                                    class="v2-speaker-chip-badge"
+                                    [class.speaker-other]="activeInterimSpeaker() === 'Other'"
+                                    [class.speaker-you]="activeInterimSpeaker() === 'You'"
+                                  >
+                                    {{ activeInterimSpeaker() === 'You' ? 'You:' : 'Other Attendee:' }}
+                                  </span>
+                                  <span class="v2-turn-text">
+                                    <span class="v2-interim-body">{{ activeInterimText() }}</span>
+                                    <span class="v2-cursor-caret">▋</span>
+                                  </span>
                                 </div>
                               }
                             </div>
-                          } @else if (transcriptionMode() === 'everyone' && seg.speaker) {
-                            <div class="v2-conversation-turn-line" [class.turn-you]="seg.speaker === 'You'" [class.turn-other]="seg.speaker === 'Other'">
-                              <span
-                                class="v2-speaker-chip-badge"
-                                [class.speaker-other]="seg.speaker === 'Other'"
-                                [class.speaker-you]="seg.speaker === 'You'"
-                              >
-                                {{ seg.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
-                              </span>
-                              <span class="v2-turn-text">{{ seg.text }}</span>
-                            </div>
                           } @else {
                             <span class="v2-seg-body">{{ seg.text }}</span>
-                          }
-
-                          <!-- Live typing tail + cursor on the active row -->
-                          @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
-                            @if (inlineInterimTail()) {
-                              <span class="v2-interim-body"> {{ inlineInterimTail() }}</span>
+                            <!-- Live typing tail + cursor on the active row -->
+                            @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
+                              @if (inlineInterimTail()) {
+                                <span class="v2-interim-body"> {{ inlineInterimTail() }}</span>
+                              }
+                              <span class="v2-cursor-caret">▋</span>
                             }
-                            <span class="v2-cursor-caret">▋</span>
                           }
                         </div>
                       </div>
@@ -1620,18 +1705,27 @@
                           ⚡ Give Answer
                         </button>
                       </div>
-                      <div class="v2-seg-main">
+                      <div class="v2-seg-main" [class.everyone-row]="transcriptionMode() === 'everyone'">
                         @if (transcriptionMode() === 'everyone' && draft.speaker) {
-                          <span
-                            class="v2-seg-speaker"
-                            [class.speaker-other]="draft.speaker === 'Other'"
-                            [class.speaker-you]="draft.speaker === 'You'"
-                          >{{ draft.speaker }}:</span>
+                          <div class="v2-conversation-turn-line" [class.turn-you]="draft.speaker === 'You'" [class.turn-other]="draft.speaker === 'Other'">
+                            <span
+                              class="v2-speaker-chip-badge"
+                              [class.speaker-other]="draft.speaker === 'Other'"
+                              [class.speaker-you]="draft.speaker === 'You'"
+                            >
+                              {{ draft.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                            </span>
+                            <span class="v2-turn-text">
+                              {{ formatTurnText(draft.text) }}
+                              <span class="v2-cursor-caret">▋</span>
+                            </span>
+                          </div>
+                        } @else {
+                          @if (draft.text) {
+                            <span class="v2-seg-body">{{ draft.text }}</span>
+                          }
+                          <span class="v2-cursor-caret">▋</span>
                         }
-                        @if (draft.text) {
-                          <span class="v2-seg-body">{{ draft.text }}</span>
-                        }
-                        <span class="v2-cursor-caret">▋</span>
                       </div>
                     </div>
                   }

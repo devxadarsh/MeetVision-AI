@@ -18,6 +18,8 @@ export interface Question {
   status: QuestionStatus;
   speaker?: string;
   answer?: Answer;
+  answers?: Answer[];
+  activeAnswerIndex?: number;
   contextSnapshot?: QuestionContextSnapshot;
 }
 
@@ -71,6 +73,7 @@ export interface Answer {
   inputTokens?: number;
   outputTokens?: number;
   createdAt: number;
+  versionIndex?: number;
 }
 
 export interface AnswerChunk {
@@ -89,6 +92,8 @@ export interface AnswerChunk {
 export interface RegeneratePayload {
   questionId: string;
   mode: AnswerMode;
+  text?: string;
+  speaker?: string;
 }
 
 export interface AnswerQuestionPayload {
@@ -103,6 +108,11 @@ export interface SpeakerTurn {
   speaker: string;
   text: string;
   timestamp?: number;
+}
+
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 export interface TranscriptSegment {
@@ -384,6 +394,8 @@ export const IPC_CHANNELS = {
   SCREENVISION_MODEL_DELETE: 'screenvision:model-delete',
   SCREENVISION_DOWNLOAD_PROGRESS: 'screenvision:download-progress',
   SCREENVISION_STATUS_CHANGED: 'screenvision:status-changed',
+  // System Clipboard
+  CLIPBOARD_WRITE_TEXT: 'clipboard:write-text',
 } as const;
 
 export interface ElectronAPI {
@@ -459,6 +471,8 @@ export interface ElectronAPI {
   removeKnowledgeDoc: (id: string) => Promise<boolean>;
   generateMeetingSummary: () => Promise<MeetingSummary>;
   exportMeetingSummary: (markdown: string) => Promise<boolean>;
+  // System Clipboard
+  copyToClipboard: (text: string) => Promise<boolean>;
 }
 
 declare global {

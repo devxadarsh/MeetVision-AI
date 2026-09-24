@@ -306,6 +306,10 @@ const api: ElectronAPI = {
   exportMeetingSummary: (markdown: string) => {
     return ipcRenderer.invoke(IPC_CHANNELS.SUMMARY_EXPORT, markdown);
   },
+  // System Clipboard
+  copyToClipboard: (text: string): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_WRITE_TEXT, text);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

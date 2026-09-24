@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, screen, session, shell, systemPreferences } from 'electron';
 
 if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
@@ -21,6 +21,7 @@ import {
   MacosPermissions,
   ParakeetStatus,
   ParakeetModelType,
+  ConversationTurn,
 } from '@shared/ipc';
 import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 import { SttService } from './services/stt.service';
@@ -417,6 +418,23 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
 
   const relevantSnippets = knowledgeService.retrieveRelevantSnippets(question.text);
 
+  // Build recent assistant conversation history (up to last 6 Q&A turns)
+  const conversationHistory: ConversationTurn[] = [];
+  for (const q of questionsMap.values()) {
+    if (q.id !== question.id && q.status === 'answered' && q.answer) {
+      const answerContent = [
+        ...(q.answer.bullets || []),
+        q.answer.code ? `\`\`\`\n${q.answer.code}\n\`\`\`` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      if (q.text && answerContent) {
+        conversationHistory.push({ role: 'user', content: q.text });
+        conversationHistory.push({ role: 'assistant', content: answerContent });
+      }
+    }
+  }
+
   llmService.generateAnswerStream(
     question,
     recentTranscript,
@@ -432,6 +450,7 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
       codeLanguage: settings.codeLanguage,
       knowledgeSnippets: relevantSnippets,
       screenContext,
+      conversationHistory: conversationHistory.slice(-8),
     },
     (chunk) => {
       if (chunk.isComplete) {
@@ -687,9 +706,35 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.ANSWER_REGENERATE,
     async (_event, payload: RegeneratePayload) => {
-      const question = questionsMap.get(payload.questionId);
+      let question = questionsMap.get(payload.questionId);
+      if (!question && payload.text) {
+        // If not found in map, attempt match by text
+        for (const q of questionsMap.values()) {
+          if (q.text.trim().toLowerCase() === payload.text.trim().toLowerCase()) {
+            question = q;
+            break;
+          }
+        }
+        if (!question) {
+          question = {
+            id: payload.questionId,
+            sessionId: 'session-live',
+            text: payload.text,
+            speaker: payload.speaker || 'Speaker',
+            askedAt: Date.now(),
+            status: 'unanswered',
+          };
+          questionsMap.set(payload.questionId, question);
+        }
+      }
+
       if (question) {
+        console.log(`[Main] Regenerating answer for "${question.text.slice(0, 50)}" | Mode: ${payload.mode}`);
         generateAnswerForQuestion(question, payload.mode);
+        return true;
+      } else {
+        console.warn(`[Main] Could not regenerate answer: question "${payload.questionId}" not found in questionsMap.`);
+        return false;
       }
     }
   );
@@ -1038,6 +1083,16 @@ function registerIpcHandlers(): void {
       return await screenVisionService.deleteModel(modelId);
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.CLIPBOARD_WRITE_TEXT, async (_event, text: string): Promise<boolean> => {
+    try {
+      clipboard.writeText(text || '');
+      return true;
+    } catch (err) {
+      console.warn('[Clipboard] Failed to write text to system clipboard:', err);
+      return false;
+    }
+  });
 }
 
 app.whenReady().then(() => {

@@ -15,6 +15,7 @@ import { highlightLeetCodeSnippet, getLineNumbersList, detectCodeLanguage } from
 import { IpcService } from '../core/ipc.service';
 import {
   Question,
+  Answer,
   HotkeyAction,
   TranscriptSegment,
   SpeakerTurn,
@@ -67,19 +68,63 @@ function parseAnswerMarkdown(raw: string): ParsedAnswer {
   }
   prose += text.slice(lastIndex);
 
-  const bullets = prose
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) =>
-      line
-        .replace(/^#{1,6}\s*/, '')
-        .replace(/^[•\-\*]\s*/, '')
-        .replace(/\*\*/g, '')
-        .replace(/`/g, '')
-        .trim()
-    )
-    .filter((line) => line.length > 0);
+  const rawBlocks = prose.split(/\n\s*\n/);
+  const bullets: string[] = [];
+
+  const bulletPrefixRegex = /^(?:•\s*|[-*+]\s+|\d+[\.\)]\s+)/;
+  const headingLineRegex = /^(?:#{1,6}\s+|[*_]{1,3}[^*_]{2,60}[*_]{1,3}[:\s]*$|(?:How it works|How this works|Approach|Complexity|Time Complexity|Space Complexity|Algorithm|Intuition|Solution|Key Components|Trade-offs|Tradeoffs|Edge Cases|Corner Cases|Overview|Data Flow|Recommendation|Architecture|Design|Implementation|Alternative Options|Pros|Cons|Key Takeaways|Summary|Explanation|Walkthrough|Step-by-step)[:\s]*$|[A-Za-z0-9\s\-_/]{2,45}:$)/i;
+  const categoryPrefixRegex = /^(?:[*_]{1,2}[^*_]+?[:*_]{1,3}\s*|[A-Z][A-Za-z0-9\s\-_/]{1,30}:\s+)/;
+
+  for (const block of rawBlocks) {
+    const trimmedBlock = block.trim();
+    if (!trimmedBlock) continue;
+
+    const lines = trimmedBlock
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const hasStructuredLines = lines.length > 1 && lines.some((l) => bulletPrefixRegex.test(l) || headingLineRegex.test(l) || categoryPrefixRegex.test(l));
+
+    if (hasStructuredLines) {
+      let currentItem = '';
+      let prevWasHeader = false;
+
+      for (const line of lines) {
+        const isBullet = bulletPrefixRegex.test(line);
+        const isHeader = headingLineRegex.test(line);
+        const isCategory = categoryPrefixRegex.test(line);
+
+        if (isBullet || isHeader || isCategory || prevWasHeader) {
+          if (currentItem) {
+            bullets.push(currentItem);
+          }
+          if (isBullet) {
+            currentItem = line.replace(bulletPrefixRegex, '').trim();
+          } else {
+            currentItem = line.trim();
+          }
+          prevWasHeader = isHeader;
+        } else {
+          if (currentItem) {
+            currentItem += ' ' + line;
+          } else {
+            currentItem = line;
+          }
+        }
+      }
+      if (currentItem) {
+        bullets.push(currentItem);
+      }
+    } else {
+      const cleaned = trimmedBlock
+        .split('\n')
+        .map((l) => l.trim())
+        .join(' ')
+        .replace(bulletPrefixRegex, '')
+        .trim();
+      if (cleaned) bullets.push(cleaned);
+    }
+  }
 
   return { bullets, code: codeParts.length > 0 ? codeParts.join('\n\n') : undefined };
 }
@@ -98,9 +143,10 @@ const SAMPLE_QUESTION_TEMPLATES: DummyQuestionTemplate[] = [
     speaker: 'Speaker 1',
     mode: 'short',
     bullets: [
-      'Three retries with jittered exponential backoff: base 500ms, cap at 4,000ms.',
-      'Only idempotency-safe HTTP status codes (500, 502, 503, 504) trigger a retry; 4xx fail immediately.',
-      'Circuit breaker opens after 5 consecutive failures with a 30s cooling period.',
+      '### Implementation Strategy',
+      '**Exponential Backoff:** Three retries with jittered backoff: base 500ms, cap at 4,000ms.',
+      '**Idempotency Filter:** Only safe HTTP codes (500, 502, 503, 504) trigger a retry; 4xx fail immediately.',
+      '**Circuit Breaker:** Opens after 5 consecutive failures with a 30s cooling period.',
     ],
     code: 'retry({ count: 3, delay: (err, i) => Math.min(500 * 2 ** i, 4000) })',
   },
@@ -186,6 +232,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
   private readonly transcriptContainer = viewChild<ElementRef<HTMLElement>>('transcriptContainer');
   private readonly highlightedCodeCache = new Map<string, SafeHtml>();
+  private readonly formattedItemCache = new Map<string, SafeHtml>();
 
   // State Signals
   readonly isElectron = signal(this.ipcService.isElectron());
@@ -629,11 +676,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
             if (last && !isLastAnswered && !draft) {
               const currentSpeaker = segment.speaker || 'Other';
 
-              // Initialize turns array if not yet present
-              const existingTurns: SpeakerTurn[] = last.turns
-                ? [...last.turns]
-                : [{ speaker: last.speaker || 'Other', text: last.text, timestamp: last.startMs }];
-
+              // Initialize turns array from helper (cloning items)
+              const existingTurns: SpeakerTurn[] = this.getSegmentTurns(last).map((t) => ({ ...t }));
               const lastTurn = existingTurns[existingTurns.length - 1];
 
               if (lastTurn && lastTurn.speaker === currentSpeaker) {
@@ -642,8 +686,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
                   return prev;
                 }
 
-                let base = lastTurn.text.trim();
-                let addition = text.trim();
+                let base = this.formatTurnText(lastTurn.text);
+                let addition = this.formatTurnText(text);
 
                 const isContinuation =
                   /^[a-z]/.test(addition) ||
@@ -658,14 +702,14 @@ export class OverlayComponent implements OnInit, OnDestroy {
                 // Different speaker responded in the same conversation! Add as a separate turn
                 existingTurns.push({
                   speaker: currentSpeaker,
-                  text: text.trim(),
+                  text: this.formatTurnText(text),
                   timestamp: segment.startMs,
                 });
               }
 
               // The row's full text is the combined conversation of all turns
               const combinedText = existingTurns
-                .map((t) => `${t.speaker === 'You' ? 'You' : 'Other Attendee'}: ${t.text}`)
+                .map((t) => `${t.speaker === 'You' ? 'You' : 'Other Attendee'}: ${this.formatTurnText(t.text)}`)
                 .join('\n');
 
               const updatedLast: TranscriptSegment = {
@@ -680,14 +724,15 @@ export class OverlayComponent implements OnInit, OnDestroy {
             // Otherwise start a brand new row. If a draft row was showing, keep
             // its id/start time so the live row seamlessly becomes the final row.
             const initialSpeaker = segment.speaker || 'Other';
+            const cleanText = this.formatTurnText(text);
             const next = [
               ...prev,
               {
                 ...segment,
                 id: draft?.id ?? segment.id,
                 startMs: draft?.startMs ?? segment.startMs,
-                text,
-                turns: [{ speaker: initialSpeaker, text, timestamp: segment.startMs }],
+                text: cleanText,
+                turns: [{ speaker: initialSpeaker, text: cleanText, timestamp: segment.startMs }],
               },
             ];
             return next.length > 500 ? next.slice(-500) : next;
@@ -902,11 +947,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
         if (q.id === chunk.questionId) {
           const estimatedIn = Math.max(1, Math.round((q.text?.length || 40) / 4));
           const estimatedOut = Math.max(1, Math.round((updated?.length || 80) / 4));
-          const inTokens = chunk.inputTokens ?? q.answer?.inputTokens ?? (isComplete ? estimatedIn : undefined);
-          const outTokens = chunk.outputTokens ?? q.answer?.outputTokens ?? (isComplete ? estimatedOut : undefined);
+          const inTokens = chunk.inputTokens ?? (isComplete ? estimatedIn : undefined);
+          const outTokens = chunk.outputTokens ?? (isComplete ? estimatedOut : undefined);
           const totTokens =
             chunk.totalTokens ??
-            q.answer?.totalTokens ??
             (inTokens !== undefined && outTokens !== undefined ? inTokens + outTokens : (isComplete ? estimatedIn + estimatedOut : undefined));
 
           if (isComplete) {
@@ -923,6 +967,35 @@ export class OverlayComponent implements OnInit, OnDestroy {
             updatedSnapshot.finalPrompt = chunk.finalPrompt;
           }
 
+          const existingAnswers: Answer[] = q.answers && q.answers.length > 0
+            ? [...q.answers]
+            : (q.answer ? [{ ...q.answer, versionIndex: 0 }] : []);
+
+          const activeIdx = q.activeAnswerIndex !== undefined
+            ? q.activeAnswerIndex
+            : Math.max(0, existingAnswers.length - 1);
+
+          const previousAtActive = existingAnswers[activeIdx];
+
+          const currentVersionAnswer: Answer = {
+            questionId: q.id,
+            mode: chunk.mode || previousAtActive?.mode || q.answer?.mode || 'short',
+            bullets: bullets.length > 0 ? bullets : (previousAtActive?.bullets || []),
+            code: parsed.code || chunk.code || previousAtActive?.code,
+            truncated: isComplete ? Boolean(chunk.truncated) : false,
+            totalTokens: totTokens ?? previousAtActive?.totalTokens,
+            inputTokens: inTokens ?? previousAtActive?.inputTokens,
+            outputTokens: outTokens ?? previousAtActive?.outputTokens,
+            createdAt: previousAtActive?.createdAt || Date.now(),
+            versionIndex: activeIdx,
+          };
+
+          if (existingAnswers.length === 0) {
+            existingAnswers.push(currentVersionAnswer);
+          } else {
+            existingAnswers[activeIdx] = currentVersionAnswer;
+          }
+
           return {
             ...q,
             contextSnapshot: updatedSnapshot || q.contextSnapshot,
@@ -931,17 +1004,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
                 ? 'pinned'
                 : 'answered'
               : 'answering',
-            answer: {
-              questionId: q.id,
-              mode: chunk.mode || q.answer?.mode || 'short',
-              bullets: bullets.length > 0 ? bullets : q.answer?.bullets || [],
-              code: parsed.code || chunk.code || q.answer?.code,
-              truncated: chunk.truncated || q.answer?.truncated,
-              totalTokens: totTokens,
-              inputTokens: inTokens,
-              outputTokens: outTokens,
-              createdAt: q.answer?.createdAt || Date.now(),
-            },
+            answer: currentVersionAnswer,
+            answers: existingAnswers,
+            activeAnswerIndex: activeIdx,
           };
         }
         return q;
@@ -949,9 +1014,52 @@ export class OverlayComponent implements OnInit, OnDestroy {
     );
   }
 
+  getActiveAnswer(q: Question | undefined): Answer | undefined {
+    if (!q) return undefined;
+    if (q.answers && q.answers.length > 0) {
+      const idx = q.activeAnswerIndex !== undefined ? q.activeAnswerIndex : q.answers.length - 1;
+      return q.answers[idx] || q.answer;
+    }
+    return q.answer;
+  }
+
+  selectAnswerVersion(q: Question, index: number, event?: MouseEvent): void {
+    if (event) event.stopPropagation();
+    if (!q.answers || index < 0 || index >= q.answers.length) return;
+    const selected = q.answers[index];
+    this.questions.update((list) =>
+      list.map((item) => {
+        if (item.id === q.id) {
+          return {
+            ...item,
+            activeAnswerIndex: index,
+            answer: selected,
+          };
+        }
+        return item;
+      })
+    );
+    this.showToast(`Showing version v${index + 1} (${selected.mode})`);
+  }
+
   async regenerateAnswer(q: Question): Promise<void> {
     const mode = this.selectedMode().toLowerCase() as 'short' | 'detailed' | 'simple';
     this.rawBufferMap.delete(q.id);
+
+    // Collect existing answer versions
+    const existingAnswers: Answer[] = q.answers && q.answers.length > 0
+      ? [...q.answers]
+      : (q.answer ? [{ ...q.answer, versionIndex: 0 }] : []);
+
+    const newVersionIndex = existingAnswers.length;
+    const newAnswer: Answer = {
+      questionId: q.id,
+      mode,
+      bullets: [],
+      createdAt: Date.now(),
+      versionIndex: newVersionIndex,
+    };
+    existingAnswers.push(newAnswer);
 
     this.questions.update((list) =>
       list.map((item) => {
@@ -959,44 +1067,56 @@ export class OverlayComponent implements OnInit, OnDestroy {
           return {
             ...item,
             status: 'answering',
-            answer: {
-              questionId: item.id,
-              mode,
-              bullets: [],
-              createdAt: Date.now(),
-            },
+            answer: newAnswer,
+            answers: existingAnswers,
+            activeAnswerIndex: newVersionIndex,
           };
         }
         return item;
       })
     );
 
-    this.showToast(`Regenerating answer (${mode})...`);
+    this.showToast(`Regenerating answer (v${newVersionIndex + 1} • ${mode})...`);
 
     if (this.isElectron()) {
-      await this.ipcService.regenerateAnswer({ questionId: q.id, mode });
+      await this.ipcService.regenerateAnswer({
+        questionId: q.id,
+        mode,
+        text: q.text,
+        speaker: q.speaker,
+      });
     } else {
       // Local demo fallback for browser testing
       setTimeout(() => {
         this.questions.update((list) =>
           list.map((item) => {
             if (item.id === q.id) {
+              const updatedAnswers = item.answers ? [...item.answers] : [];
+              const finalAns: Answer = {
+                questionId: item.id,
+                mode,
+                bullets: [
+                  `Regenerated point 1 in ${mode} mode (v${newVersionIndex + 1}).`,
+                  `Regenerated point 2 with direct talking advice.`,
+                  `Regenerated point 3 with clear meeting guidance.`,
+                ],
+                totalTokens: 185,
+                inputTokens: 110,
+                outputTokens: 75,
+                createdAt: Date.now(),
+                versionIndex: newVersionIndex,
+              };
+              if (updatedAnswers.length > newVersionIndex) {
+                updatedAnswers[newVersionIndex] = finalAns;
+              } else {
+                updatedAnswers.push(finalAns);
+              }
               return {
                 ...item,
                 status: 'answered',
-                answer: {
-                  questionId: item.id,
-                  mode,
-                  bullets: [
-                    `Regenerated point 1 in ${mode} mode.`,
-                    `Regenerated point 2 with direct talking advice.`,
-                    `Regenerated point 3 with clear meeting guidance.`,
-                  ],
-                  totalTokens: 185,
-                  inputTokens: 110,
-                  outputTokens: 75,
-                  createdAt: Date.now(),
-                },
+                answer: finalAns,
+                answers: updatedAnswers,
+                activeAnswerIndex: newVersionIndex,
               };
             }
             return item;
@@ -1113,26 +1233,229 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return detectCodeLanguage(code);
   }
 
+  async writeToClipboard(text: string): Promise<boolean> {
+    if (!text) return false;
+
+    // 1. Try native Electron clipboard through IPC service first (works without document focus)
+    if (this.ipcService.isElectron()) {
+      try {
+        const ok = await this.ipcService.copyToClipboard(text);
+        if (ok) return true;
+      } catch (err) {
+        console.warn('[Overlay] IPC copyToClipboard failed, trying fallbacks:', err);
+      }
+    }
+
+    // 2. Try standard Web Clipboard API
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (err) {
+        console.warn('[Overlay] navigator.clipboard.writeText failed, trying DOM fallback:', err);
+      }
+    }
+
+    // 3. Fallback: Hidden textarea with document.execCommand('copy')
+    try {
+      if (typeof document !== 'undefined') {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (success) return true;
+      }
+    } catch (domErr) {
+      console.error('[Overlay] DOM execCommand copy fallback failed:', domErr);
+    }
+
+    return false;
+  }
+
   async copyCodeSnippet(code: string | undefined, event: MouseEvent): Promise<void> {
     event.stopPropagation();
     if (!code) return;
-    try {
-      await navigator.clipboard.writeText(code);
+    const ok = await this.writeToClipboard(code);
+    if (ok) {
       this.showToast('Code copied to clipboard!');
-    } catch {
-      this.showToast('Failed to copy code');
+    } else {
+      this.showToast('Could not access clipboard');
     }
   }
 
   async copyText(text: string | undefined, event: MouseEvent): Promise<void> {
     event.stopPropagation();
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await this.writeToClipboard(text);
+    if (ok) {
       this.showToast('Prompt copied to clipboard!');
-    } catch {
-      this.showToast('Failed to copy prompt');
+    } else {
+      this.showToast('Could not access clipboard');
     }
+  }
+
+  isAnswerHeading(text: string | undefined): boolean {
+    if (!text) return false;
+    const trimmed = text.trim();
+    if (/^#{1,6}\s+/.test(trimmed)) return true;
+    if (/^[*_]{1,3}[^*_]{2,60}[*_]{1,3}[:\s]*$/.test(trimmed)) return true;
+    if (
+      /^(How it works|How this works|Approach|Complexity|Time Complexity|Space Complexity|Algorithm|Intuition|Solution|Key Components|Trade-offs|Tradeoffs|Edge Cases|Corner Cases|Overview|Data Flow|Recommendation|Architecture|Design|Implementation|Alternative Options|Pros|Cons|Key Takeaways|Summary|Explanation|Walkthrough|Step-by-step)[:\s]*$/i.test(
+        trimmed
+      )
+    ) {
+      return true;
+    }
+    if (/^[A-Za-z0-9\s\-_/]{2,45}:$/.test(trimmed)) return true;
+    return false;
+  }
+
+  formatAnswerItem(text: string | undefined): SafeHtml {
+    if (!text) return '';
+    const cached = this.formattedItemCache.get(text);
+    if (cached) return cached;
+
+    let str = text.trim();
+    const isHeading = this.isAnswerHeading(str);
+
+    if (/^#{1,6}\s+/.test(str)) {
+      str = str.replace(/^#{1,6}\s+/, '');
+    }
+
+    let escaped = this.escapeHtml(str);
+
+    if (isHeading) {
+      escaped = escaped.replace(/^[\*#_\s]+|[\*#_:\s]+$/g, '').trim();
+      const headingHtml = `<span class="answer-heading-text">${escaped}</span>`;
+      const safe = this.sanitizer.bypassSecurityTrustHtml(headingHtml);
+      this.formattedItemCache.set(text, safe);
+      return safe;
+    }
+
+    // Match bold or emphasis category prefixes with colons, e.g.:
+    // **Category:** text, **Category**: text, *Category*: text, or *Category**: text
+    const boldColonCat = /^([*]{1,2}([^*]+?)[:*]{1,3}\s*)/;
+    const boldDashCat = /^(\*\*(.+?)\*\*\s*[-–—]\s*)/;
+    const plainColonCat = /^([A-Z][A-Za-z0-9\s\-_/]{1,28}:)(\s+)/;
+
+    if (boldColonCat.test(escaped)) {
+      escaped = escaped.replace(boldColonCat, (_, _full, cat) => {
+        const cleanCat = (cat || '').replace(/[:*]+$/, '').trim();
+        return `<span class="answer-category">${cleanCat}:</span> `;
+      });
+    } else if (boldDashCat.test(escaped)) {
+      escaped = escaped.replace(boldDashCat, (_, _full, cat) => {
+        return `<span class="answer-category">${(cat || '').trim()}</span> — `;
+      });
+    } else if (plainColonCat.test(escaped)) {
+      escaped = escaped.replace(plainColonCat, (_, cat, space) => {
+        return `<span class="answer-category">${cat}</span>${space}`;
+      });
+    }
+
+    // Replace inline bold: **text** -> <strong class="answer-bold">text</strong>
+    escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong class="answer-bold">$1</strong>');
+
+    // Replace inline code: `code` -> <code class="answer-inline-code">$1</code>
+    escaped = escaped.replace(/`([^`]+)`/g, '<code class="answer-inline-code">$1</code>');
+
+    const safe = this.sanitizer.bypassSecurityTrustHtml(escaped);
+    this.formattedItemCache.set(text, safe);
+    return safe;
+  }
+
+  private escapeHtml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+
+  getSegmentTurns(seg: TranscriptSegment | null | undefined): SpeakerTurn[] {
+    if (!seg) return [];
+    if (seg.turns && seg.turns.length > 0) {
+      return seg.turns;
+    }
+
+    const text = seg.text || '';
+    if (/(?:Other Attendee|Other|You):\s*/i.test(text)) {
+      const lines = text.split('\n');
+      const turns: SpeakerTurn[] = [];
+      let currentSpeaker = seg.speaker || 'Other';
+      let currentText = '';
+
+      for (const line of lines) {
+        const match = line.match(/^(Other Attendee|Other|You):\s*(.*)$/i);
+        if (match) {
+          if (currentText.trim()) {
+            turns.push({ speaker: currentSpeaker, text: currentText.trim() });
+          }
+          currentSpeaker = match[1].toLowerCase().startsWith('you') ? 'You' : 'Other';
+          currentText = match[2];
+        } else {
+          currentText += (currentText ? ' ' : '') + line;
+        }
+      }
+      if (currentText.trim()) {
+        turns.push({ speaker: currentSpeaker, text: currentText.trim() });
+      }
+      if (turns.length > 0) {
+        return turns;
+      }
+    }
+
+    return [
+      {
+        speaker: seg.speaker || 'Other',
+        text: text,
+        timestamp: seg.startMs,
+      },
+    ];
+  }
+
+  formatTurnText(text: string | undefined): string {
+    if (!text) return '';
+    return text.replace(/^(?:Other Attendee|Other|You):\s*/i, '').trim();
+  }
+
+  isLiveTailOnTurn(seg: TranscriptSegment, turn: SpeakerTurn, index: number): boolean {
+    const interim = this.displayedInterim();
+    if (!interim || !interim.text || !interim.text.trim()) return false;
+    const turns = this.getSegmentTurns(seg);
+    const isLastTurn = index === turns.length - 1;
+    if (!isLastTurn) return false;
+    const interimSpeaker = interim.speaker || this.activeLiveSpeaker() || 'Other';
+    return turn.speaker === interimSpeaker;
+  }
+
+  isNewInterimSpeakerTurn(seg: TranscriptSegment): boolean {
+    const interim = this.displayedInterim();
+    if (!interim || !interim.text || !interim.text.trim()) return false;
+    const turns = this.getSegmentTurns(seg);
+    if (turns.length === 0) return false;
+    const lastTurn = turns[turns.length - 1];
+    const interimSpeaker = interim.speaker || this.activeLiveSpeaker() || 'Other';
+    return lastTurn.speaker !== interimSpeaker;
+  }
+
+  activeInterimSpeaker(): string {
+    const interim = this.displayedInterim();
+    return interim?.speaker || this.activeLiveSpeaker() || 'Other';
+  }
+
+  activeInterimText(): string {
+    const interim = this.displayedInterim();
+    return interim?.text ? interim.text.trim() : '';
   }
 
   /** Opens a fresh, empty draft row to receive the next utterance. */
@@ -1398,22 +1721,35 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   async copyAnswer(question: Question): Promise<void> {
-    if (!question.answer) return;
+    const answer = this.getActiveAnswer(question);
+    if (!answer) return;
+
+    const bulletLines: string[] = [];
+    for (const b of answer.bullets) {
+      if (this.isAnswerHeading(b)) {
+        const clean = b.replace(/^[\*#_\s]+|[\*#_:\s]+$/g, '').trim();
+        bulletLines.push('', `${clean}:`);
+      } else {
+        bulletLines.push(`• ${b}`);
+      }
+    }
+
+    const versionLabel = question.answers && question.answers.length > 1
+      ? ` (v${(question.activeAnswerIndex !== undefined ? question.activeAnswerIndex : question.answers.length - 1) + 1} • ${answer.mode.toUpperCase()})`
+      : ` (${answer.mode.toUpperCase()})`;
 
     const formatted = [
       `Q: ${question.text}`,
       '',
-      'Talking Points:',
-      ...question.answer.bullets.map((b) => `• ${b}`),
-      ...(question.answer.code ? ['', 'Snippet:', question.answer.code] : []),
+      `Talking Points${versionLabel}:`,
+      ...bulletLines,
+      ...(answer.code ? ['', 'Snippet:', answer.code] : []),
     ].join('\n');
 
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(formatted);
-      }
+    const ok = await this.writeToClipboard(formatted);
+    if (ok) {
       this.showToast('Answer copied to clipboard!');
-    } catch {
+    } else {
       this.showToast('Could not access clipboard');
     }
   }
@@ -1544,12 +1880,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
     const summary = this.meetingSummary();
     if (!summary) return;
 
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(summary.markdown);
-      }
+    const ok = await this.writeToClipboard(summary.markdown);
+    if (ok) {
       this.showToast('Summary markdown copied to clipboard!');
-    } catch {
+    } else {
       this.showToast('Could not access clipboard.');
     }
   }
@@ -1560,12 +1894,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
       this.showToast('No screen text to copy.');
       return;
     }
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(text);
-      }
+    const ok = await this.writeToClipboard(text);
+    if (ok) {
       this.showToast('Screen OCR text copied to clipboard!');
-    } catch {
+    } else {
       this.showToast('Could not access clipboard.');
     }
   }
