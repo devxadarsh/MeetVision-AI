@@ -10,16 +10,20 @@ import {
   viewChild,
   HostListener,
 } from '@angular/core';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { highlightLeetCodeSnippet, getLineNumbersList, detectCodeLanguage } from '../core/syntax-highlighter';
 import { IpcService } from '../core/ipc.service';
 import {
   Question,
   HotkeyAction,
   TranscriptSegment,
+  SpeakerTurn,
   AnswerChunk,
   MeetingSummary,
   TranscriptionMode,
   AnswerMode,
   AppSettings,
+  ScreenVisionStatus,
 } from '@shared/ipc';
 
 type AnswerModeLabel = 'Short' | 'Detailed' | 'Simple';
@@ -179,7 +183,9 @@ function liveInterimTail(finalText: string, interimText: string): string {
 })
 export class OverlayComponent implements OnInit, OnDestroy {
   private readonly ipcService = inject(IpcService);
+  private readonly sanitizer = inject(DomSanitizer);
   private readonly transcriptContainer = viewChild<ElementRef<HTMLElement>>('transcriptContainer');
+  private readonly highlightedCodeCache = new Map<string, SafeHtml>();
 
   // State Signals
   readonly isElectron = signal(this.ipcService.isElectron());
@@ -198,8 +204,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly hasMicPermission = signal<boolean>(true);
   readonly isMacOS = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent || navigator.platform);
 
-  // Tab: 'questions' | 'transcript' | 'summary' (Milestones 2 & 7)
-  readonly currentTab = signal<'questions' | 'transcript' | 'summary'>('questions');
+  // Tab: 'questions' | 'transcript' | 'screenvision' | 'summary' (Milestones 2, 7 & ScreenVision)
+  readonly currentTab = signal<'questions' | 'transcript' | 'screenvision' | 'summary'>('questions');
 
   // Meeting Summary Signals (Milestone 7 / FR-52)
   readonly meetingSummary = signal<MeetingSummary | null>(null);
@@ -232,6 +238,13 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
   // Set of collapsed question IDs
   readonly collapsedIds = signal<Set<string>>(new Set<string>());
+
+  // Set of question IDs with expanded source context (other speech, your speech, OCR text)
+  readonly expandedContextIds = signal<Set<string>>(new Set<string>());
+
+  // ScreenVision Status & OCR Signals
+  readonly screenVisionStatus = signal<ScreenVisionStatus | null>(null);
+  readonly isScanningScreen = signal<boolean>(false);
 
   // Question List Signal
   readonly questions = signal<Question[]>([]);
@@ -364,6 +377,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeTranscriptionMode?: () => void;
   private unsubscribeSettingsChanged?: () => void;
   private unsubscribeTranscriptClear?: () => void;
+  private unsubscribeScreenVisionStatus?: () => void;
+  private lastShiftTime = 0;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
@@ -437,6 +452,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
     if (this.unsubscribeTranscriptionMode) this.unsubscribeTranscriptionMode();
     if (this.unsubscribeSettingsChanged) this.unsubscribeSettingsChanged();
     if (this.unsubscribeTranscriptClear) this.unsubscribeTranscriptClear();
+    if (this.unsubscribeScreenVisionStatus) this.unsubscribeScreenVisionStatus();
   }
 
   private seedInitialQuestions(): void {
@@ -454,7 +470,16 @@ export class OverlayComponent implements OnInit, OnDestroy {
           mode: 'short',
           bullets: SAMPLE_QUESTION_TEMPLATES[0].bullets,
           code: SAMPLE_QUESTION_TEMPLATES[0].code,
+          totalTokens: 342,
+          inputTokens: 218,
+          outputTokens: 124,
           createdAt: now - 12000,
+        },
+        contextSnapshot: {
+          otherText: 'How does the retry logic and backoff work in the payment pipeline?',
+          userText: 'We use jittered exponential backoff with a circuit breaker probe.',
+          finalPrompt: '[SYSTEM INSTRUCTIONS]\nYou are MeetVision AI, a senior engineer answering a CODING / DSA question in real time.\n- Approach: 2-4 bullets explaining the algorithm.\n- Code: exactly ONE complete solution inside a fenced block.\n\n[USER CONTEXT & TARGET QUESTION]\nQuestion asked: "How does the retry logic and exponential backoff work in the payment flow?"',
+          capturedAt: now - 15000,
         },
       },
       {
@@ -468,7 +493,15 @@ export class OverlayComponent implements OnInit, OnDestroy {
           questionId: 'q-2',
           mode: 'detailed',
           bullets: SAMPLE_QUESTION_TEMPLATES[1].bullets,
+          totalTokens: 485,
+          inputTokens: 290,
+          outputTokens: 195,
           createdAt: now - 110000,
+        },
+        contextSnapshot: {
+          otherText: 'What is the rollout schedule and canary plan for the v2 migration?',
+          finalPrompt: '[SYSTEM INSTRUCTIONS]\nYou are MeetVision AI, a senior software architect answering a SYSTEM DESIGN question.\n\n[USER CONTEXT & TARGET QUESTION]\nQuestion asked: "What\'s the rollout schedule and canary plan for the v2 migration?"',
+          capturedAt: now - 120000,
         },
       },
       {
@@ -482,7 +515,15 @@ export class OverlayComponent implements OnInit, OnDestroy {
           questionId: 'q-3',
           mode: 'simple',
           bullets: SAMPLE_QUESTION_TEMPLATES[2].bullets,
+          totalTokens: 260,
+          inputTokens: 175,
+          outputTokens: 85,
           createdAt: now - 350000,
+        },
+        contextSnapshot: {
+          otherText: 'What fallback triggers if KYC verification times out?',
+          finalPrompt: '[SYSTEM INSTRUCTIONS]\nYou are MeetVision AI answering a question in simple mode.\n\n[USER CONTEXT & TARGET QUESTION]\nQuestion asked: "What fallback triggers if the KYC verification service times out?"',
+          capturedAt: now - 360000,
         },
       },
     ];
@@ -586,34 +627,59 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
             // Append to the active row unless a new draft row has been requested.
             if (last && !isLastAnswered && !draft) {
-              if (last.text.toLowerCase().endsWith(text.toLowerCase()) || last.text.includes(text)) {
-                return prev;
+              const currentSpeaker = segment.speaker || 'Other';
+
+              // Initialize turns array if not yet present
+              const existingTurns: SpeakerTurn[] = last.turns
+                ? [...last.turns]
+                : [{ speaker: last.speaker || 'Other', text: last.text, timestamp: last.startMs }];
+
+              const lastTurn = existingTurns[existingTurns.length - 1];
+
+              if (lastTurn && lastTurn.speaker === currentSpeaker) {
+                // Same speaker continues speaking: append to the current turn
+                if (lastTurn.text.toLowerCase().endsWith(text.toLowerCase()) || lastTurn.text.includes(text)) {
+                  return prev;
+                }
+
+                let base = lastTurn.text.trim();
+                let addition = text.trim();
+
+                const isContinuation =
+                  /^[a-z]/.test(addition) ||
+                  /^(and|but|so|because|which|that|to|for|or|also|then|with|as|if|when)\b/i.test(addition);
+
+                if (isContinuation && base.endsWith('.')) {
+                  base = base.slice(0, -1).trim();
+                }
+
+                lastTurn.text = `${base} ${addition}`.trim();
+              } else {
+                // Different speaker responded in the same conversation! Add as a separate turn
+                existingTurns.push({
+                  speaker: currentSpeaker,
+                  text: text.trim(),
+                  timestamp: segment.startMs,
+                });
               }
 
-              let base = last.text.trim();
-              let addition = text.trim();
+              // The row's full text is the combined conversation of all turns
+              const combinedText = existingTurns
+                .map((t) => `${t.speaker === 'You' ? 'You' : 'Other Attendee'}: ${t.text}`)
+                .join('\n');
 
-              // If addition continues the current thought or starts with a lowercase/conjunction,
-              // strip any artificial period from the previous chunk so speech does not break into fragments
-              const isContinuation =
-                /^[a-z]/.test(addition) ||
-                /^(and|but|so|because|which|that|to|for|or|also|then|with|as|if|when)\b/i.test(addition);
-
-              if (isContinuation && base.endsWith('.')) {
-                base = base.slice(0, -1).trim();
-              }
-
-              const combinedText = `${base} ${addition}`.trim();
               const updatedLast: TranscriptSegment = {
                 ...last,
                 text: combinedText,
                 endMs: segment.endMs || Date.now(),
+                turns: existingTurns,
               };
               return [...prev.slice(0, -1), updatedLast];
             }
 
             // Otherwise start a brand new row. If a draft row was showing, keep
             // its id/start time so the live row seamlessly becomes the final row.
+            const initialSpeaker = segment.speaker || 'Other';
             const next = [
               ...prev,
               {
@@ -621,6 +687,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
                 id: draft?.id ?? segment.id,
                 startMs: draft?.startMs ?? segment.startMs,
                 text,
+                turns: [{ speaker: initialSpeaker, text, timestamp: segment.startMs }],
               },
             ];
             return next.length > 500 ? next.slice(-500) : next;
@@ -689,6 +756,34 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.unsubscribeTranscriptionMode = this.ipcService.onTranscriptionModeChanged((mode) => {
       this.transcriptionMode.set(mode);
     });
+
+    // ScreenVision Status
+    this.ipcService.getScreenVisionStatus().then((status) => {
+      if (status) {
+        this.screenVisionStatus.set(status);
+      }
+    }).catch(() => {});
+
+    this.unsubscribeScreenVisionStatus = this.ipcService.onScreenVisionStatusChanged((status) => {
+      this.screenVisionStatus.set(status);
+    });
+  }
+
+  async scanScreenNow(): Promise<void> {
+    if (this.isScanningScreen()) return;
+    this.isScanningScreen.set(true);
+    try {
+      const res = await this.ipcService.captureScreenVisionNow();
+      if (res && res.success) {
+        this.showToast(`👁️ ScreenVision: extracted ${res.wordCount} words`);
+      } else {
+        this.showToast(res?.error || 'Screen capture failed');
+      }
+    } catch (err: any) {
+      this.showToast(err?.message || 'Screen capture error');
+    } finally {
+      this.isScanningScreen.set(false);
+    }
   }
 
   async toggleTranscriptionMode(): Promise<void> {
@@ -805,8 +900,32 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.questions.update((list) =>
       list.map((q) => {
         if (q.id === chunk.questionId) {
+          const estimatedIn = Math.max(1, Math.round((q.text?.length || 40) / 4));
+          const estimatedOut = Math.max(1, Math.round((updated?.length || 80) / 4));
+          const inTokens = chunk.inputTokens ?? q.answer?.inputTokens ?? (isComplete ? estimatedIn : undefined);
+          const outTokens = chunk.outputTokens ?? q.answer?.outputTokens ?? (isComplete ? estimatedOut : undefined);
+          const totTokens =
+            chunk.totalTokens ??
+            q.answer?.totalTokens ??
+            (inTokens !== undefined && outTokens !== undefined ? inTokens + outTokens : (isComplete ? estimatedIn + estimatedOut : undefined));
+
+          if (isComplete) {
+            console.log(
+              `[Overlay] Answer completed for "${q.text.slice(0, 40)}" | Tokens: total=${totTokens}, input=${inTokens}, output=${outTokens}`
+            );
+          }
+
+          let updatedSnapshot = q.contextSnapshot ? { ...q.contextSnapshot } : undefined;
+          if (chunk.finalPrompt) {
+            if (!updatedSnapshot) {
+              updatedSnapshot = { capturedAt: Date.now() };
+            }
+            updatedSnapshot.finalPrompt = chunk.finalPrompt;
+          }
+
           return {
             ...q,
+            contextSnapshot: updatedSnapshot || q.contextSnapshot,
             status: isComplete
               ? q.status === 'pinned'
                 ? 'pinned'
@@ -818,6 +937,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
               bullets: bullets.length > 0 ? bullets : q.answer?.bullets || [],
               code: parsed.code || chunk.code || q.answer?.code,
               truncated: chunk.truncated || q.answer?.truncated,
+              totalTokens: totTokens,
+              inputTokens: inTokens,
+              outputTokens: outTokens,
               createdAt: q.answer?.createdAt || Date.now(),
             },
           };
@@ -870,6 +992,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
                     `Regenerated point 2 with direct talking advice.`,
                     `Regenerated point 3 with clear meeting guidance.`,
                   ],
+                  totalTokens: 185,
+                  inputTokens: 110,
+                  outputTokens: 75,
                   createdAt: Date.now(),
                 },
               };
@@ -968,6 +1093,46 @@ export class OverlayComponent implements OnInit, OnDestroy {
       );
     }
     this.showToast('Row cleared');
+  }
+
+  getHighlightedCode(code: string | undefined): SafeHtml {
+    if (!code) return '';
+    const cached = this.highlightedCodeCache.get(code);
+    if (cached) return cached;
+    const rawHtml = highlightLeetCodeSnippet(code);
+    const safe = this.sanitizer.bypassSecurityTrustHtml(rawHtml);
+    this.highlightedCodeCache.set(code, safe);
+    return safe;
+  }
+
+  getCodeLineNumbers(code: string | undefined): number[] {
+    return getLineNumbersList(code);
+  }
+
+  getCodeLanguage(code: string | undefined): string {
+    return detectCodeLanguage(code);
+  }
+
+  async copyCodeSnippet(code: string | undefined, event: MouseEvent): Promise<void> {
+    event.stopPropagation();
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      this.showToast('Code copied to clipboard!');
+    } catch {
+      this.showToast('Failed to copy code');
+    }
+  }
+
+  async copyText(text: string | undefined, event: MouseEvent): Promise<void> {
+    event.stopPropagation();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      this.showToast('Prompt copied to clipboard!');
+    } catch {
+      this.showToast('Failed to copy prompt');
+    }
   }
 
   /** Opens a fresh, empty draft row to receive the next utterance. */
@@ -1186,6 +1351,9 @@ export class OverlayComponent implements OnInit, OnDestroy {
             mode: template.mode,
             bullets: template.bullets,
             code: template.code,
+            totalTokens: 215,
+            inputTokens: 140,
+            outputTokens: 75,
             createdAt: Date.now(),
           },
     };
@@ -1294,6 +1462,23 @@ export class OverlayComponent implements OnInit, OnDestroy {
     return this.collapsedIds().has(id);
   }
 
+  toggleContextExpanded(id: string, event?: Event): void {
+    if (event) event.stopPropagation();
+    this.expandedContextIds.update((set) => {
+      const copy = new Set(set);
+      if (copy.has(id)) {
+        copy.delete(id);
+      } else {
+        copy.add(id);
+      }
+      return copy;
+    });
+  }
+
+  isContextExpanded(id: string): boolean {
+    return this.expandedContextIds().has(id);
+  }
+
   formatRelativeTime(timestamp: number): string {
     const diffSec = Math.floor((Date.now() - timestamp) / 1000);
     if (diffSec < 20) return 'Just now';
@@ -1369,6 +1554,27 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }
   }
 
+  async copyScreenText(): Promise<void> {
+    const text = this.screenVisionStatus()?.lastExtractedText;
+    if (!text) {
+      this.showToast('No screen text to copy.');
+      return;
+    }
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      }
+      this.showToast('Screen OCR text copied to clipboard!');
+    } catch {
+      this.showToast('Could not access clipboard.');
+    }
+  }
+
+  formatScanTimestamp(timestamp: number | null | undefined): string {
+    if (!timestamp) return '';
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
   // Adjust Overlay Width & Length (Height)
   private isResizing = false;
   private startX = 0;
@@ -1436,6 +1642,18 @@ export class OverlayComponent implements OnInit, OnDestroy {
         target.isContentEditable)
     ) {
       return;
+    }
+
+    if (event.key === 'Shift') {
+      const now = Date.now();
+      if (now - this.lastShiftTime <= 450) {
+        this.lastShiftTime = 0;
+        this.scanScreenNow();
+        return;
+      }
+      this.lastShiftTime = now;
+    } else {
+      this.lastShiftTime = 0;
     }
 
     let deltaX = 0;

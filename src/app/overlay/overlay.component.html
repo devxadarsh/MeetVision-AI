@@ -123,6 +123,22 @@
               ↻ New Session
             </button>
 
+          <!-- ScreenVision Scan Button -->
+          <button
+            type="button"
+            class="chip screenvision-chip"
+            [class.active]="isScanningScreen()"
+            (click)="scanScreenNow()"
+            (mouseenter)="showTooltip($event, 'ScreenVision OCR (' + (screenVisionStatus()?.lastScanWordCount || 0) + ' words captured) - Double Shift / ⌘⇧S')"
+            (mouseleave)="hideTooltip()"
+          >
+            @if (isScanningScreen()) {
+              <span class="spinner-sm"></span> Scanning...
+            } @else {
+              👁️ ScreenVision
+            }
+          </button>
+
           <!-- Click-through indicator / toggle -->
           <button
             type="button"
@@ -164,6 +180,14 @@
               [class.active]="audioLevel() > 0.05"
             ></span>
             Live Transcript
+          </button>
+          <button
+            type="button"
+            class="tab-btn screenvision-tab"
+            [class.active]="currentTab() === 'screenvision'"
+            (click)="currentTab.set('screenvision')"
+          >
+            👁️ Screen Text
           </button>
           <button
             type="button"
@@ -223,6 +247,31 @@
               (mouseleave)="hideTooltip()"
             >
               🗑
+            </button>
+          } @else if (currentTab() === 'screenvision') {
+            <button
+              type="button"
+              class="action-btn primary"
+              [disabled]="isScanningScreen()"
+              (click)="scanScreenNow()"
+              (mouseenter)="showTooltip($event, 'Scan display content with OCR now (Double Shift)')"
+              (mouseleave)="hideTooltip()"
+            >
+              @if (isScanningScreen()) {
+                <span class="spinner-sm"></span> Scanning...
+              } @else {
+                👁️ Scan Screen
+              }
+            </button>
+            <button
+              type="button"
+              class="action-btn icon-only"
+              [disabled]="!screenVisionStatus()?.lastExtractedText"
+              (click)="copyScreenText()"
+              (mouseenter)="showTooltip($event, 'Copy extracted screen text')"
+              (mouseleave)="hideTooltip()"
+            >
+              📋
             </button>
           } @else {
             <button
@@ -332,6 +381,29 @@
                   </div>
 
                   <div class="card-controls" (click)="$event.stopPropagation()">
+                    @if (q.answer) {
+                      <div
+                        class="token-stat-pill"
+                        (mouseenter)="showTooltip($event, 'Total: ' + (q.answer.totalTokens || 0) + ' tokens | Input prompt: ' + (q.answer.inputTokens || 0) + ' | Output generated: ' + (q.answer.outputTokens || 0))"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        <span class="tok-total">🎟️ {{ q.answer.totalTokens || (q.status === 'answering' ? '...' : 0) }}</span>
+                        <span class="tok-detail">(in:{{ q.answer.inputTokens || 0 }} out:{{ q.answer.outputTokens || 0 }})</span>
+                      </div>
+                    }
+
+                    @if (q.contextSnapshot || q.answer) {
+                      <button
+                        type="button"
+                        class="card-action-btn context-btn"
+                        [class.active]="isContextExpanded(q.id)"
+                        (click)="toggleContextExpanded(q.id, $event)"
+                        (mouseenter)="showTooltip($event, isContextExpanded(q.id) ? 'Hide source context' : 'View expanded context (other speaker, your speech, screen text)')"
+                        (mouseleave)="hideTooltip()"
+                      >
+                        🔍 Context
+                      </button>
+                    }
                     <button
                       type="button"
                       class="card-action-btn"
@@ -377,6 +449,69 @@
                   {{ q.text }}
                 </h2>
 
+                <!-- Expanded Source Context View (Requirement 3) -->
+                @if (isContextExpanded(q.id)) {
+                  <div class="context-snapshot-card">
+                    <div class="context-snapshot-header">
+                      <span class="context-snapshot-title">📌 Source Context at Generation</span>
+                      <button
+                        type="button"
+                        class="context-close-btn"
+                        (click)="toggleContextExpanded(q.id, $event)"
+                        title="Close context view"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div class="context-snapshot-body">
+                      <!-- Other Speaker Text -->
+                      <div class="context-block block-other">
+                        <span class="context-block-label">🎙️ Other Attendee / Speaker:</span>
+                        <p class="context-block-text">
+                          {{ q.contextSnapshot?.otherText || (q.speaker === 'Other' ? q.text : 'No preceding other participant text') }}
+                        </p>
+                      </div>
+
+                      <!-- User Text (As per transcription mode) -->
+                      @if (transcriptionMode() === 'everyone' || q.contextSnapshot?.userText) {
+                        <div class="context-block block-you">
+                          <span class="context-block-label">🗣️ You (Microphone):</span>
+                          <p class="context-block-text">
+                            {{ q.contextSnapshot?.userText || (q.speaker === 'You' ? q.text : 'No preceding speech from your microphone') }}
+                          </p>
+                        </div>
+                      }
+
+                      <!-- Screen OCR Text -->
+                      @if (q.contextSnapshot?.ocrText || screenVisionStatus()?.lastExtractedText) {
+                        <div class="context-block block-ocr">
+                          <span class="context-block-label">👁️ Visible Screen Content (OCR):</span>
+                          <pre class="context-block-ocr">{{ q.contextSnapshot?.ocrText || screenVisionStatus()?.lastExtractedText }}</pre>
+                        </div>
+                      }
+
+                      <!-- Final LLM Prompt Used -->
+                      @if (q.contextSnapshot?.finalPrompt) {
+                        <div class="context-block block-prompt">
+                          <div class="context-block-header-row">
+                            <span class="context-block-label">🤖 Final LLM Prompt Used:</span>
+                            <button
+                              type="button"
+                              class="copy-prompt-btn"
+                              (click)="copyText(q.contextSnapshot!.finalPrompt!, $event)"
+                              title="Copy final prompt to clipboard"
+                            >
+                              📋 Copy Prompt
+                            </button>
+                          </div>
+                          <pre class="context-block-prompt">{{ q.contextSnapshot?.finalPrompt }}</pre>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+
                 <!-- Give Answer action when question is unanswered -->
                 @if (q.status === 'unanswered') {
                   <div class="unanswered-prompt-bar">
@@ -395,8 +530,10 @@
                 @if (!isCollapsed(q.id) && q.answer) {
                   <div class="answer-section">
                     <div class="bullets-header">
-                      <span class="talking-points-label">Talking Points</span>
-                      <span class="mode-tag">{{ q.answer.mode }}</span>
+                      <div class="header-left-meta">
+                        <span class="talking-points-label">Talking Points</span>
+                        <span class="mode-tag">{{ q.answer.mode }}</span>
+                      </div>
                     </div>
 
                     <ul class="bullets-list">
@@ -417,7 +554,7 @@
                     @if (q.answer.code) {
                       <div class="code-block">
                         <div class="code-header">Example snippet</div>
-                        <pre><code>{{ q.answer.code }}</code></pre>
+                        <pre><code [innerHTML]="getHighlightedCode(q.answer.code)"></code></pre>
                       </div>
                     }
 
@@ -532,15 +669,40 @@
                         </div>
                       </div>
 
-                      <div class="seg-body">
-                        @if (transcriptionMode() === 'everyone' && seg.speaker) {
-                          <span
-                            class="seg-speaker"
-                            [class.speaker-other]="seg.speaker === 'Other'"
-                            [class.speaker-you]="seg.speaker === 'You'"
-                          >{{ seg.speaker }}:</span>
+                      <div class="seg-body" [class.everyone-row]="transcriptionMode() === 'everyone'">
+                        @if (transcriptionMode() === 'everyone' && seg.turns && seg.turns.length > 0) {
+                          <div class="turns-container">
+                            @for (turn of seg.turns; track $index) {
+                              <div
+                                class="conversation-turn-line"
+                                [class.turn-you]="turn.speaker === 'You'"
+                                [class.turn-other]="turn.speaker === 'Other'"
+                              >
+                                <span
+                                  class="speaker-chip-badge"
+                                  [class.speaker-other]="turn.speaker === 'Other'"
+                                  [class.speaker-you]="turn.speaker === 'You'"
+                                >
+                                  {{ turn.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                                </span>
+                                <span class="turn-text">{{ turn.text }}</span>
+                              </div>
+                            }
+                          </div>
+                        } @else if (transcriptionMode() === 'everyone' && seg.speaker) {
+                          <div class="conversation-turn-line" [class.turn-you]="seg.speaker === 'You'" [class.turn-other]="seg.speaker === 'Other'">
+                            <span
+                              class="speaker-chip-badge"
+                              [class.speaker-other]="seg.speaker === 'Other'"
+                              [class.speaker-you]="seg.speaker === 'You'"
+                            >
+                              {{ seg.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                            </span>
+                            <span class="turn-text">{{ seg.text }}</span>
+                          </div>
+                        } @else {
+                          <span class="seg-text">{{ seg.text }}</span>
                         }
-                        <span class="seg-text">{{ seg.text }}</span>
 
                         <!-- Live typing tail + cursor on the active row -->
                         @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
@@ -588,6 +750,69 @@
                     </div>
                   </div>
                 }
+              </div>
+            }
+          </div>
+        </main>
+      } @else if (currentTab() === 'screenvision') {
+        <!-- ScreenVision Visible Screen OCR Text Inspector View -->
+        <main class="screenvision-view">
+          <div class="screenvision-status-banner">
+            <div class="sv-status-left">
+              <span class="sv-dot" [class.scanning]="isScanningScreen()"></span>
+              <span class="sv-model-label">
+                {{ screenVisionStatus()?.activeModelId || 'pp-ocrv5-mobile' }}
+              </span>
+              @if (screenVisionStatus()?.lastScanTimestamp) {
+                <span class="sv-scan-time">
+                  Scanned: {{ formatScanTimestamp(screenVisionStatus()!.lastScanTimestamp) }}
+                </span>
+              }
+            </div>
+            <div class="sv-status-right">
+              <span class="sv-word-badge">
+                {{ screenVisionStatus()?.lastScanWordCount || 0 }} words captured
+              </span>
+            </div>
+          </div>
+
+          <div class="screenvision-content-scroll">
+            @if (screenVisionStatus()?.lastExtractedText; as text) {
+              <div class="screenvision-text-card">
+                <div class="text-card-toolbar">
+                  <span class="text-card-title">Visible Screen Text</span>
+                  <button
+                    type="button"
+                    class="sv-copy-btn"
+                    (click)="copyScreenText()"
+                    title="Copy to clipboard"
+                  >
+                    📋 Copy Text
+                  </button>
+                </div>
+                <div class="extracted-text-body">
+                  <pre class="extracted-pre">{{ text }}</pre>
+                </div>
+              </div>
+            } @else {
+              <div class="empty-state">
+                <div class="empty-icon">👁️</div>
+                <div class="empty-title">No screen text captured yet</div>
+                <div class="empty-subtitle">
+                  Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>Scan Screen</strong> to extract text visible on your display.
+                </div>
+                <button
+                  type="button"
+                  class="empty-btn"
+                  [disabled]="isScanningScreen()"
+                  (click)="scanScreenNow()"
+                >
+                  @if (isScanningScreen()) {
+                    Scanning...
+                  } @else {
+                    👁️ Scan Screen Now
+                  }
+                </button>
               </div>
             }
           </div>
@@ -694,6 +919,8 @@
               {{ questions().length }} questions
             } @else if (currentTab() === 'transcript') {
               {{ transcriptSegments().length }} transcript segments
+            } @else if (currentTab() === 'screenvision') {
+              {{ screenVisionStatus()?.lastScanWordCount || 0 }} words extracted
             } @else {
               {{ meetingSummary()?.actionItems?.length || 0 }} action items
             }
@@ -796,6 +1023,22 @@
                 ↻ New Session
               </button>
 
+              <!-- ScreenVision Scan Button -->
+              <button
+                type="button"
+                class="v2-pill-btn screenvision-pill"
+                [class.active]="isScanningScreen()"
+                (click)="scanScreenNow()"
+                (mouseenter)="showTooltip($event, 'ScreenVision OCR (' + (screenVisionStatus()?.lastScanWordCount || 0) + ' words captured) - Double Shift / ⌘⇧S')"
+                (mouseleave)="hideTooltip()"
+              >
+                @if (isScanningScreen()) {
+                  <span class="spinner-sm"></span> Scanning...
+                } @else {
+                  👁️ ScreenVision
+                }
+              </button>
+
               <!-- Click-through indicator / toggle -->
               <button
                 type="button"
@@ -835,6 +1078,15 @@
                   [class.active]="audioLevel() > 0.05"
                 ></span>
                 <span>Live Stream</span>
+              </button>
+
+              <button
+                type="button"
+                class="v2-tab-segment"
+                [class.active]="currentTab() === 'screenvision'"
+                (click)="currentTab.set('screenvision')"
+              >
+                <span>👁️ Screen Text</span>
               </button>
 
               <button
@@ -895,6 +1147,31 @@
                   (mouseleave)="hideTooltip()"
                 >
                   🗑
+                </button>
+              } @else if (currentTab() === 'screenvision') {
+                <button
+                  type="button"
+                  class="v2-action-tool primary"
+                  [disabled]="isScanningScreen()"
+                  (click)="scanScreenNow()"
+                  (mouseenter)="showTooltip($event, 'Scan display content with OCR now (Double Shift)')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  @if (isScanningScreen()) {
+                    Scanning...
+                  } @else {
+                    👁️ Scan
+                  }
+                </button>
+                <button
+                  type="button"
+                  class="v2-action-tool icon"
+                  [disabled]="!screenVisionStatus()?.lastExtractedText"
+                  (click)="copyScreenText()"
+                  (mouseenter)="showTooltip($event, 'Copy extracted screen text')"
+                  (mouseleave)="hideTooltip()"
+                >
+                  📋
                 </button>
               } @else {
                 <button
@@ -995,6 +1272,29 @@
                     </div>
 
                     <div class="v2-card-buttons" (click)="$event.stopPropagation()">
+                      @if (q.answer) {
+                        <div
+                          class="v2-token-stat-pill"
+                          (mouseenter)="showTooltip($event, 'Total: ' + (q.answer.totalTokens || 0) + ' tokens | Input prompt: ' + (q.answer.inputTokens || 0) + ' | Output generated: ' + (q.answer.outputTokens || 0))"
+                          (mouseleave)="hideTooltip()"
+                        >
+                          <span class="v2-tok-total">🎟️ {{ q.answer.totalTokens || (q.status === 'answering' ? '...' : 0) }}</span>
+                          <span class="v2-tok-detail">(in:{{ q.answer.inputTokens || 0 }} out:{{ q.answer.outputTokens || 0 }})</span>
+                        </div>
+                      }
+
+                      @if (q.contextSnapshot || q.answer) {
+                        <button
+                          type="button"
+                          class="v2-card-btn v2-context-btn"
+                          [class.active]="isContextExpanded(q.id)"
+                          (click)="toggleContextExpanded(q.id, $event)"
+                          (mouseenter)="showTooltip($event, isContextExpanded(q.id) ? 'Hide source context' : 'View expanded context (other speaker, your speech, screen text)')"
+                          (mouseleave)="hideTooltip()"
+                        >
+                          🔍 Context
+                        </button>
+                      }
                       <button
                         type="button"
                         class="v2-card-btn"
@@ -1040,6 +1340,69 @@
                     {{ q.text }}
                   </h3>
 
+                  <!-- Expanded Source Context View (Requirement 3 - V2 Modern HUD) -->
+                  @if (isContextExpanded(q.id)) {
+                    <div class="v2-context-snapshot-card">
+                      <div class="v2-context-snapshot-header">
+                        <span class="v2-context-title">📌 Source Context at Generation</span>
+                        <button
+                          type="button"
+                          class="v2-context-close-btn"
+                          (click)="toggleContextExpanded(q.id, $event)"
+                          title="Close context view"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div class="v2-context-snapshot-body">
+                        <!-- Other Speaker Text -->
+                        <div class="v2-context-block block-other">
+                          <span class="v2-context-label">🎙️ Other Attendee / Speaker:</span>
+                          <p class="v2-context-text">
+                            {{ q.contextSnapshot?.otherText || (q.speaker === 'Other' ? q.text : 'No preceding other participant text') }}
+                          </p>
+                        </div>
+
+                        <!-- User Text (As per transcription mode) -->
+                        @if (transcriptionMode() === 'everyone' || q.contextSnapshot?.userText) {
+                          <div class="v2-context-block block-you">
+                            <span class="v2-context-label">🗣️ You (Microphone):</span>
+                            <p class="v2-context-text">
+                              {{ q.contextSnapshot?.userText || (q.speaker === 'You' ? q.text : 'No preceding speech from your microphone') }}
+                            </p>
+                          </div>
+                        }
+
+                        <!-- Screen OCR Text -->
+                        @if (q.contextSnapshot?.ocrText || screenVisionStatus()?.lastExtractedText) {
+                          <div class="v2-context-block block-ocr">
+                            <span class="v2-context-label">👁️ Visible Screen Content (OCR):</span>
+                            <pre class="v2-context-ocr">{{ q.contextSnapshot?.ocrText || screenVisionStatus()?.lastExtractedText }}</pre>
+                          </div>
+                        }
+
+                        <!-- Final LLM Prompt Used -->
+                        @if (q.contextSnapshot?.finalPrompt) {
+                          <div class="v2-context-block block-prompt">
+                            <div class="v2-context-header-row">
+                              <span class="v2-context-label">🤖 Final LLM Prompt Used:</span>
+                              <button
+                                type="button"
+                                class="v2-copy-prompt-btn"
+                                (click)="copyText(q.contextSnapshot!.finalPrompt!, $event)"
+                                title="Copy final prompt to clipboard"
+                              >
+                                📋 Copy Prompt
+                              </button>
+                            </div>
+                            <pre class="v2-context-prompt">{{ q.contextSnapshot?.finalPrompt }}</pre>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+
                   <!-- Give Answer action when question is unanswered -->
                   @if (q.status === 'unanswered') {
                     <div class="v2-unanswered-prompt-bar">
@@ -1058,8 +1421,10 @@
                   @if (!isCollapsed(q.id) && q.answer) {
                     <div class="v2-answer-container">
                       <div class="v2-answer-top-bar">
-                        <span class="v2-talking-label">TALKING POINTS</span>
-                        <span class="v2-tone-tag">{{ q.answer.mode }}</span>
+                        <div class="v2-top-left-meta">
+                          <span class="v2-talking-label">TALKING POINTS</span>
+                          <span class="v2-tone-tag">{{ q.answer.mode }}</span>
+                        </div>
                       </div>
 
                       <ul class="v2-bullet-list">
@@ -1080,7 +1445,7 @@
                       @if (q.answer.code) {
                         <div class="v2-code-container">
                           <div class="v2-code-label">Example Snippet</div>
-                          <pre><code>{{ q.answer.code }}</code></pre>
+                          <pre><code [innerHTML]="getHighlightedCode(q.answer.code)"></code></pre>
                         </div>
                       }
 
@@ -1190,15 +1555,40 @@
                           </div>
                         </div>
 
-                        <div class="v2-seg-main">
-                          @if (transcriptionMode() === 'everyone' && seg.speaker) {
-                            <span
-                              class="v2-seg-speaker"
-                              [class.speaker-other]="seg.speaker === 'Other'"
-                              [class.speaker-you]="seg.speaker === 'You'"
-                            >{{ seg.speaker }}:</span>
+                        <div class="v2-seg-main" [class.everyone-row]="transcriptionMode() === 'everyone'">
+                          @if (transcriptionMode() === 'everyone' && seg.turns && seg.turns.length > 0) {
+                            <div class="v2-turns-container">
+                              @for (turn of seg.turns; track $index) {
+                                <div
+                                  class="v2-conversation-turn-line"
+                                  [class.turn-you]="turn.speaker === 'You'"
+                                  [class.turn-other]="turn.speaker === 'Other'"
+                                >
+                                  <span
+                                    class="v2-speaker-chip-badge"
+                                    [class.speaker-other]="turn.speaker === 'Other'"
+                                    [class.speaker-you]="turn.speaker === 'You'"
+                                  >
+                                    {{ turn.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                                  </span>
+                                  <span class="v2-turn-text">{{ turn.text }}</span>
+                                </div>
+                              }
+                            </div>
+                          } @else if (transcriptionMode() === 'everyone' && seg.speaker) {
+                            <div class="v2-conversation-turn-line" [class.turn-you]="seg.speaker === 'You'" [class.turn-other]="seg.speaker === 'Other'">
+                              <span
+                                class="v2-speaker-chip-badge"
+                                [class.speaker-other]="seg.speaker === 'Other'"
+                                [class.speaker-you]="seg.speaker === 'You'"
+                              >
+                                {{ seg.speaker === 'You' ? 'You:' : 'Other Attendee:' }}
+                              </span>
+                              <span class="v2-turn-text">{{ seg.text }}</span>
+                            </div>
+                          } @else {
+                            <span class="v2-seg-body">{{ seg.text }}</span>
                           }
-                          <span class="v2-seg-body">{{ seg.text }}</span>
 
                           <!-- Live typing tail + cursor on the active row -->
                           @if (seg.id === activeTranscriptRowId() && displayedInterim()) {
@@ -1245,6 +1635,60 @@
                       </div>
                     </div>
                   }
+                </div>
+              }
+            </div>
+          </main>
+        } @else if (currentTab() === 'screenvision') {
+          <!-- V2 ScreenVision OCR Text View -->
+          <main class="v2-screenvision-container">
+            <div class="v2-sv-meta-bar">
+              <div class="v2-sv-status-pill">
+                <span class="v2-sv-dot" [class.scanning]="isScanningScreen()"></span>
+                <span class="v2-sv-engine-name">{{ screenVisionStatus()?.activeModelId || 'pp-ocrv5-mobile' }}</span>
+              </div>
+              <div class="v2-sv-stats">
+                <span class="v2-sv-stat-pill">Words: {{ screenVisionStatus()?.lastScanWordCount || 0 }}</span>
+                @if (screenVisionStatus()?.lastScanTimestamp) {
+                  <span class="v2-sv-stat-pill">Scanned: {{ formatScanTimestamp(screenVisionStatus()!.lastScanTimestamp) }}</span>
+                }
+              </div>
+            </div>
+
+            <div class="v2-sv-scroll">
+              @if (screenVisionStatus()?.lastExtractedText; as text) {
+                <div class="v2-sv-card">
+                  <div class="v2-sv-card-header">
+                    <span class="v2-sv-card-title">LIVE DISPLAY TEXT</span>
+                    <button
+                      type="button"
+                      class="v2-sv-action-btn"
+                      (click)="copyScreenText()"
+                    >
+                      📋 Copy Text
+                    </button>
+                  </div>
+                  <pre class="v2-sv-pre">{{ text }}</pre>
+                </div>
+              } @else {
+                <div class="v2-empty-hero">
+                  <div class="v2-empty-glyph">👁️</div>
+                  <div class="v2-empty-heading">No Screen Context Captured</div>
+                  <div class="v2-empty-sub">
+                    Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>Scan</strong> to extract visible screen content.
+                  </div>
+                  <button
+                    type="button"
+                    class="v2-empty-action"
+                    [disabled]="isScanningScreen()"
+                    (click)="scanScreenNow()"
+                  >
+                    @if (isScanningScreen()) {
+                      Scanning Display...
+                    } @else {
+                      👁️ Scan Screen Now
+                    }
+                  </button>
                 </div>
               }
             </div>
@@ -1320,6 +1764,8 @@
                 {{ questions().length }} questions detected
               } @else if (currentTab() === 'transcript') {
                 {{ transcriptSegments().length }} segments logged
+              } @else if (currentTab() === 'screenvision') {
+                {{ screenVisionStatus()?.lastScanWordCount || 0 }} words extracted
               } @else {
                 {{ meetingSummary()?.actionItems?.length || 0 }} tasks identified
               }

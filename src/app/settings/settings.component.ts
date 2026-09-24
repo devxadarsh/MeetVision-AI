@@ -23,8 +23,16 @@ import {
   ParakeetDownloadProgress,
   LlmProviderInfo,
   CodeLanguage,
+  OcrModelId,
+  ScreenVisionStatus,
+  OcrDownloadProgress,
 } from '@shared/ipc';
 import type { LlmProviderId } from '@shared/llm-provider-catalog';
+import {
+  OCR_MODEL_CATALOG,
+  DEFAULT_OCR_MODEL_ID,
+  OcrModelCatalogEntry,
+} from '@shared/screenvision-catalog';
 import {
   STT_MODEL_CATALOG,
   artifactTotalBytes,
@@ -117,8 +125,24 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   // Tabs
   readonly activeTab = signal<
-    'profile' | 'audio' | 'ai' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'
+    'profile' | 'audio' | 'ai' | 'screenvision' | 'overlay' | 'keys' | 'knowledge' | 'privacy' | 'shortcuts' | 'diagnostics'
   >('profile');
+
+  // ScreenVision Signals (docs/ScreenVision.md)
+  readonly screenVisionEnabled = signal<boolean>(true);
+  readonly screenVisionModel = signal<OcrModelId>(DEFAULT_OCR_MODEL_ID);
+  readonly screenVisionInterval = signal<number>(0);
+  readonly screenVisionTechWords = signal<boolean>(true);
+  readonly screenVisionStatus = signal<ScreenVisionStatus | null>(null);
+  readonly ocrModelsList = signal<OcrModelCatalogEntry[]>([...OCR_MODEL_CATALOG]);
+  readonly ocrDownloadProgressMap = signal<Record<string, OcrDownloadProgress>>({});
+  readonly isScanningScreen = signal<boolean>(false);
+
+  readonly selectedOcrModel = computed(() => this.screenVisionModel());
+  readonly activeModelInfo = computed(() => {
+    const id = this.screenVisionModel();
+    return this.ocrModelsList().find((m) => m.id === id) || null;
+  });
 
   // Diagnostics Signal (Milestone 5)
   readonly diagnostics = signal<AppDiagnostics | null>(null);
@@ -249,6 +273,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // Cleanup references
   private unsubscribeParakeetDownloadProgress?: () => void;
   private unsubscribeModeChanged?: () => void;
+  private unsubscribeScreenVisionStatus?: () => void;
+  private unsubscribeOcrDownloadProgress?: () => void;
 
   // Dynamic Speech-to-Text Model Download Requirement Evaluator
   readonly sttRequirement = computed(() => {
@@ -329,6 +355,28 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.unsubscribeModeChanged = this.ipcService.onTranscriptionModeChanged((mode) => {
       this.transcriptionMode.set(mode);
     });
+
+    // ScreenVision subscriptions
+    try {
+      const svStatus = await this.ipcService.getScreenVisionStatus();
+      this.screenVisionStatus.set(svStatus);
+    } catch {
+      // ignore
+    }
+
+    this.unsubscribeScreenVisionStatus = this.ipcService.onScreenVisionStatusChanged((status) => {
+      this.screenVisionStatus.set(status);
+    });
+
+    this.unsubscribeOcrDownloadProgress = this.ipcService.onOcrDownloadProgress((prog) => {
+      this.ocrDownloadProgressMap.update((m) => ({ ...m, [prog.modelId]: prog }));
+      if (prog.status === 'completed') {
+        this.showToast(`OCR Model ${prog.modelId} downloaded successfully!`, 'success');
+        this.ipcService.getScreenVisionStatus().then((st) => this.screenVisionStatus.set(st));
+      } else if (prog.status === 'error') {
+        this.showToast(`OCR download error: ${prog.error || 'Failed'}`, 'info');
+      }
+    });
   }
 
   ngOnDestroy(): void {
@@ -338,6 +386,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
     if (this.unsubscribeModeChanged) {
       this.unsubscribeModeChanged();
+    }
+    if (this.unsubscribeScreenVisionStatus) {
+      this.unsubscribeScreenVisionStatus();
+    }
+    if (this.unsubscribeOcrDownloadProgress) {
+      this.unsubscribeOcrDownloadProgress();
     }
   }
 
@@ -398,6 +452,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (typeof settings.overlayOpacity === 'number') this.overlayOpacity.set(settings.overlayOpacity);
     if (settings.overlayVersion) this.overlayVersion.set(settings.overlayVersion);
     if (typeof settings.multiWorkspace === 'boolean') this.multiWorkspace.set(settings.multiWorkspace);
+
+    // ScreenVision Settings (docs/ScreenVision.md)
+    if (settings.screenVision) {
+      this.screenVisionEnabled.set(settings.screenVision.enabled !== false);
+      if (settings.screenVision.activeModelId) {
+        this.screenVisionModel.set(settings.screenVision.activeModelId);
+      }
+      if (typeof settings.screenVision.autoIntervalSeconds === 'number') {
+        this.screenVisionInterval.set(settings.screenVision.autoIntervalSeconds);
+      }
+      if (typeof settings.screenVision.technicalWordCorrectionEnabled === 'boolean') {
+        this.screenVisionTechWords.set(settings.screenVision.technicalWordCorrectionEnabled);
+      }
+    }
 
     await this.loadKnowledgeDocs();
   }
@@ -855,6 +923,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
         glossary: this.glossary(),
         tone: this.tone(),
       },
+      screenVision: {
+        enabled: this.screenVisionEnabled(),
+        activeModelId: this.screenVisionModel(),
+        autoIntervalSeconds: this.screenVisionInterval(),
+        technicalWordCorrectionEnabled: this.screenVisionTechWords(),
+      },
     };
 
     const apiKeys: Record<string, string> = {};
@@ -1024,6 +1098,80 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (hrs > 0) return `${hrs}h ${mins}m ${s}s`;
     if (mins > 0) return `${mins}m ${s}s`;
     return `${s}s`;
+  }
+
+  async scanScreenNow(): Promise<void> {
+    this.isScanningScreen.set(true);
+    try {
+      const res = await this.ipcService.captureScreenVisionNow();
+      if (res.success) {
+        this.showToast(`Screen scanned: ${res.wordCount} words detected.`, 'success');
+      } else {
+        this.showToast(`Screen scan failed: ${res.error || 'Unknown error'}`, 'info');
+      }
+    } catch {
+      this.showToast('Screen scan error', 'info');
+    } finally {
+      this.isScanningScreen.set(false);
+      const st = await this.ipcService.getScreenVisionStatus();
+      this.screenVisionStatus.set(st);
+    }
+  }
+
+  async downloadOcrModel(modelId: OcrModelId): Promise<void> {
+    try {
+      this.showToast(`Starting download for ${modelId}...`, 'info');
+      await this.ipcService.downloadOcrModel(modelId);
+    } catch {
+      this.showToast(`Failed to download ${modelId}`, 'info');
+    }
+  }
+
+  async deleteOcrModel(modelId: OcrModelId): Promise<void> {
+    try {
+      await this.ipcService.deleteOcrModel(modelId);
+      this.showToast(`Model ${modelId} deleted.`, 'info');
+      const st = await this.ipcService.getScreenVisionStatus();
+      this.screenVisionStatus.set(st);
+    } catch {
+      this.showToast(`Failed to delete ${modelId}`, 'info');
+    }
+  }
+
+  selectOcrModel(modelId: OcrModelId): void {
+    this.screenVisionModel.set(modelId);
+  }
+
+  toggleScreenVision(): void {
+    this.screenVisionEnabled.update((v) => !v);
+  }
+
+  toggleTechWordCorrection(): void {
+    this.screenVisionTechWords.update((v) => !v);
+  }
+
+  setScreenInterval(interval: number): void {
+    this.screenVisionInterval.set(interval);
+  }
+
+  onScreenVisionIntervalChange(event: Event): void {
+    const val = parseInt((event.target as HTMLSelectElement).value, 10);
+    if (!isNaN(val)) {
+      this.screenVisionInterval.set(val);
+    }
+  }
+
+  isModelInstalled(modelId: OcrModelId): boolean {
+    const installed = this.screenVisionStatus()?.installedModels || ['pp-ocrv5-mobile'];
+    return installed.includes(modelId);
+  }
+
+  getOcrDownloadProgress(modelId: OcrModelId): OcrDownloadProgress | undefined {
+    return this.ocrDownloadProgressMap()[modelId];
+  }
+
+  formatScanTime(timestamp: number): string {
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   showToast(message: string, type: 'success' | 'info' = 'success'): void {

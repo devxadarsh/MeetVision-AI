@@ -14,6 +14,7 @@ export interface LlmStreamOptions {
   thinkingEnabled?: boolean;
   codeLanguage?: CodeLanguage;
   knowledgeSnippets?: { title: string; snippet: string }[];
+  screenContext?: string;
 }
 
 export interface ILlmService {
@@ -177,19 +178,25 @@ export class LlmService implements ILlmService {
       thinkingEnabled: options.thinkingEnabled,
     };
 
-    const emit = (text: string) => onChunk({ questionId: question.id, delta: text, mode });
+    let streamedChars = 0;
+    const emit = (text: string) => {
+      streamedChars += (text || '').length;
+      onChunk({ questionId: question.id, delta: text, mode });
+    };
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+    const promptLength = (systemPrompt?.length || 0) + (userPrompt?.length || 0);
+    const finalPrompt = `[SYSTEM INSTRUCTIONS]\n${systemPrompt}\n\n[USER CONTEXT & TARGET QUESTION]\n${userPrompt}`;
 
     try {
       const result = await provider!.streamAnswer({ ...request, signal: controller.signal }, emit);
-      this.emitComplete(question.id, mode, result, onChunk);
+      this.emitComplete(question.id, mode, result, onChunk, promptLength, streamedChars, finalPrompt);
     } catch (err) {
       console.warn(`[LlmService] Provider "${provider?.id}" failed, falling back to local generator:`, err);
       const fallback = this.registry.get('local');
       if (fallback) {
         const result = await fallback.streamAnswer({ ...request, signal: undefined }, emit);
-        this.emitComplete(question.id, mode, result, onChunk);
+        this.emitComplete(question.id, mode, result, onChunk, promptLength, streamedChars, finalPrompt);
       }
     } finally {
       clearTimeout(timeoutId);
@@ -200,9 +207,23 @@ export class LlmService implements ILlmService {
     questionId: string,
     mode: 'short' | 'detailed' | 'simple',
     result: LlmStreamResult | void,
-    onChunk: (chunk: AnswerChunk) => void
+    onChunk: (chunk: AnswerChunk) => void,
+    promptLength: number = 0,
+    streamedLength: number = 0,
+    finalPrompt?: string
   ): void {
     const finish = result?.finishReason;
+    const estInput = Math.max(1, Math.round(promptLength / 4));
+    const estOutput = Math.max(1, Math.round(streamedLength / 4));
+
+    const inputTokens = result?.inputTokens ?? estInput;
+    const outputTokens = result?.outputTokens ?? estOutput;
+    const totalTokens = result?.totalTokens ?? (inputTokens + outputTokens);
+
+    console.log(
+      `[LlmService] Answer completed for question "${questionId}" | Tokens: total=${totalTokens}, input=${inputTokens}, output=${outputTokens}`
+    );
+
     onChunk({
       questionId,
       delta: '',
@@ -210,6 +231,10 @@ export class LlmService implements ILlmService {
       mode,
       code: result?.code,
       truncated: finish === 'length' || finish === 'max_tokens',
+      totalTokens,
+      inputTokens,
+      outputTokens,
+      finalPrompt,
     });
   }
 
@@ -234,19 +259,26 @@ export class LlmService implements ILlmService {
 
     const knowledgeText =
       options.knowledgeSnippets && options.knowledgeSnippets.length > 0
-        ? `Relevant Knowledge Base Documentation:\n${options.knowledgeSnippets
+        ? `[Relevant Knowledge Base Documentation]\n${options.knowledgeSnippets
             .map((s) => `[Doc: ${s.title}]\n${s.snippet}`)
             .join('\n\n')}\n\n`
         : '';
 
+    const screenText =
+      options.screenContext && options.screenContext.trim().length > 0
+        ? `[Visible Screen Context (ScreenVision OCR)]\n"""\n${options.screenContext.trim()}\n"""\n\n`
+        : '';
+
     const contextText =
       recentTranscript.length > 0
-        ? `Recent meeting context:\n${recentTranscript.join('\n')}\n\n`
+        ? `[Live Conversation Context (Speaker Turn History)]\n${recentTranscript.join('\n')}\n\n`
         : '';
+
+    const speakerTag = question.speaker ? ` (Asked by: ${question.speaker})` : '';
 
     return {
       systemPrompt: this.systemPromptFor(intent, mode, contextBlock, tone, options.codeLanguage),
-      userPrompt: `${knowledgeText}${contextText}Question asked: "${question.text}"`,
+      userPrompt: `${knowledgeText}${screenText}${contextText}[Target Question / Statement to Answer]${speakerTag}:\n"${question.text}"`,
     };
   }
 

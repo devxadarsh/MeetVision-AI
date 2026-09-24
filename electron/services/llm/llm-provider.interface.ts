@@ -22,6 +22,9 @@ export interface LlmStreamResult {
   code?: string;
   /** Provider stop reason, e.g. 'stop' or 'length' (hit the output cap). */
   finishReason?: string;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export interface ILlmProvider {

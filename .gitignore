@@ -70,5 +70,4 @@ __screenshots__/
 # Agent context files (kept local)
 AGENTS.md
 CLAUDE.md
-docs/PRD.md
-
+docs/*

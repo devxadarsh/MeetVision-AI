@@ -19,6 +19,10 @@ import {
   ParakeetDownloadProgress,
   LlmProviderInfo,
   AnswerQuestionPayload,
+  OcrModelId,
+  ScreenVisionStatus,
+  OcrDownloadProgress,
+  ScreenVisionCaptureResult,
 } from '@shared/ipc';
 import { LLM_PROVIDERS } from '@shared/llm-provider-catalog';
 
@@ -278,6 +282,55 @@ export class IpcService {
   onParakeetDownloadProgress(callback: (progress: ParakeetDownloadProgress) => void): (() => void) {
     if (!this.api) return () => {};
     return this.api.onParakeetDownloadProgress(callback);
+  }
+
+  // ScreenVision: Text-first Screen Understanding & OCR
+  async getScreenVisionStatus(): Promise<ScreenVisionStatus> {
+    if (!this.api) {
+      return {
+        enabled: true,
+        activeModelId: 'pp-ocrv5-mobile',
+        isScanning: false,
+        lastScanTimestamp: null,
+        lastScanWordCount: 0,
+        lastExtractedText: '',
+        installedModels: ['pp-ocrv5-mobile'],
+        error: null,
+      };
+    }
+    return this.api.getScreenVisionStatus();
+  }
+
+  async captureScreenVisionNow(): Promise<ScreenVisionCaptureResult> {
+    if (!this.api) {
+      return {
+        text: 'Screen capture simulated',
+        wordCount: 3,
+        timestamp: Date.now(),
+        success: true,
+      };
+    }
+    return this.api.captureScreenVisionNow();
+  }
+
+  async downloadOcrModel(modelId: OcrModelId): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.downloadOcrModel(modelId);
+  }
+
+  async deleteOcrModel(modelId: OcrModelId): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.deleteOcrModel(modelId);
+  }
+
+  onOcrDownloadProgress(callback: (progress: OcrDownloadProgress) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onOcrDownloadProgress(callback);
+  }
+
+  onScreenVisionStatusChanged(callback: (status: ScreenVisionStatus) => void): (() => void) {
+    if (!this.api) return () => {};
+    return this.api.onScreenVisionStatusChanged(callback);
   }
 
   // Pluggable STT Engines

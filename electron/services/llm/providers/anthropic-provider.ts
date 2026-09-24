@@ -40,6 +40,11 @@ export class AnthropicProvider implements ILlmProvider {
     let buffer = '';
     let finishReason: string | undefined;
 
+    let totalTokens: number | undefined;
+    let inputTokens: number | undefined;
+    let outputTokens: number | undefined;
+    let streamedChars = 0;
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -54,11 +59,20 @@ export class AnthropicProvider implements ILlmProvider {
         if (dataStr === '[DONE]') continue;
         try {
           const data = JSON.parse(dataStr);
+          if (data.type === 'message_start' && data.message?.usage) {
+            inputTokens = data.message.usage.input_tokens;
+          }
           if (data.type === 'content_block_delta' && data.delta?.text) {
+            streamedChars += data.delta.text.length;
             onDelta(data.delta.text);
           }
-          if (data.type === 'message_delta' && typeof data.delta?.stop_reason === 'string') {
-            finishReason = data.delta.stop_reason;
+          if (data.type === 'message_delta') {
+            if (typeof data.delta?.stop_reason === 'string') {
+              finishReason = data.delta.stop_reason;
+            }
+            if (data.usage?.output_tokens) {
+              outputTokens = data.usage.output_tokens;
+            }
           }
         } catch {
           // Ignore partial stream line parsing.
@@ -66,6 +80,15 @@ export class AnthropicProvider implements ILlmProvider {
       }
     }
 
-    return { finishReason };
+    if (inputTokens !== undefined || outputTokens !== undefined) {
+      totalTokens = (inputTokens || 0) + (outputTokens || 0);
+    } else {
+      const promptLen = (request.systemPrompt?.length || 0) + (request.userPrompt?.length || 0);
+      inputTokens = Math.max(1, Math.round(promptLen / 4));
+      outputTokens = Math.max(1, Math.round(streamedChars / 4));
+      totalTokens = inputTokens + outputTokens;
+    }
+
+    return { finishReason, totalTokens, inputTokens, outputTokens };
   }
 }

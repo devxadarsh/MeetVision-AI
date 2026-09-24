@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AppSettings, AnswerMode, CodeLanguage, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType } from '@shared/ipc';
+import { AppSettings, AnswerMode, CodeLanguage, ContextProfile, TranscriptionMode, STTEngineType, ParakeetModelType, ScreenVisionSettings } from '@shared/ipc';
 import {
   LlmProviderId,
   LLM_PROVIDERS,
@@ -23,6 +23,7 @@ interface StoredConfigFile {
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
+  screenVision?: ScreenVisionSettings;
   encryptedApiKeys?: Record<string, string>; // provider id -> base64 encoded ciphertext
   hasAcceptedConsent?: boolean;
   consentAcceptedAt?: number;
@@ -75,6 +76,13 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   echoCancellation: true,
   autoGainControl: true,
   profile: DEFAULT_PROFILE,
+  screenVision: {
+    enabled: true,
+    activeModelId: 'pp-ocrv5-mobile',
+    autoIntervalSeconds: 0,
+    technicalWordCorrectionEnabled: true,
+    noiseFilteringEnabled: true,
+  },
 };
 
 export class StoreService {
@@ -217,6 +225,15 @@ export class StoreService {
       noiseSuppression: this.data.noiseSuppression !== false,
       echoCancellation: this.data.echoCancellation !== false,
       autoGainControl: this.data.autoGainControl !== false,
+      screenVision: this.data.screenVision
+        ? { ...this.data.screenVision }
+        : {
+            enabled: true,
+            activeModelId: 'pp-ocrv5-mobile',
+            autoIntervalSeconds: 0,
+            technicalWordCorrectionEnabled: true,
+            noiseFilteringEnabled: true,
+          },
     };
   }
 
@@ -325,6 +342,13 @@ export class StoreService {
           ? newSettings.profile.glossary.map((g) => g.trim()).filter((g) => g.length > 0)
           : DEFAULT_PROFILE.glossary,
         tone: newSettings.profile.tone || 'concise',
+      };
+    }
+
+    if (newSettings.screenVision) {
+      this.data.screenVision = {
+        ...(this.data.screenVision || DEFAULT_SETTINGS.screenVision!),
+        ...newSettings.screenVision,
       };
     }
 

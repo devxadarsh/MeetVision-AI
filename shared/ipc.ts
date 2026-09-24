@@ -2,6 +2,14 @@ import type { LlmProviderCatalogEntry, LlmProviderId } from './llm-provider-cata
 
 export type QuestionStatus = 'new' | 'unanswered' | 'answering' | 'answered' | 'pinned' | 'dismissed';
 
+export interface QuestionContextSnapshot {
+  otherText?: string;
+  userText?: string;
+  ocrText?: string;
+  capturedAt?: number;
+  finalPrompt?: string;
+}
+
 export interface Question {
   id: string;
   sessionId: string;
@@ -10,6 +18,7 @@ export interface Question {
   status: QuestionStatus;
   speaker?: string;
   answer?: Answer;
+  contextSnapshot?: QuestionContextSnapshot;
 }
 
 export interface KnowledgeDoc {
@@ -58,6 +67,9 @@ export interface Answer {
   code?: string;
   /** True when the provider stopped because it hit the output-token cap. */
   truncated?: boolean;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   createdAt: number;
 }
 
@@ -68,6 +80,10 @@ export interface AnswerChunk {
   mode?: AnswerMode;
   code?: string;
   truncated?: boolean;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  finalPrompt?: string;
 }
 
 export interface RegeneratePayload {
@@ -83,6 +99,12 @@ export interface AnswerQuestionPayload {
   mode?: AnswerMode;
 }
 
+export interface SpeakerTurn {
+  speaker: string;
+  text: string;
+  timestamp?: number;
+}
+
 export interface TranscriptSegment {
   id: string;
   text: string;
@@ -90,6 +112,7 @@ export interface TranscriptSegment {
   startMs: number;
   endMs: number;
   speaker?: string;
+  turns?: SpeakerTurn[];
 }
 
 export interface SessionStatus {
@@ -182,6 +205,45 @@ export interface STTEngineInfo {
   statusDetail?: string;
 }
 
+import type { OcrModelId, OcrModelCatalogEntry } from './screenvision-catalog';
+export type { OcrModelId, OcrModelCatalogEntry };
+
+export interface ScreenVisionSettings {
+  enabled?: boolean;
+  activeModelId?: OcrModelId;
+  autoIntervalSeconds?: number; // 0 = manual only, 5 = every 5s, etc.
+  technicalWordCorrectionEnabled?: boolean;
+  noiseFilteringEnabled?: boolean;
+}
+
+export interface ScreenVisionStatus {
+  enabled: boolean;
+  activeModelId: OcrModelId;
+  isScanning: boolean;
+  lastScanTimestamp: number | null;
+  lastScanWordCount: number;
+  lastExtractedText: string;
+  installedModels: OcrModelId[];
+  error: string | null;
+}
+
+export interface OcrDownloadProgress {
+  modelId: OcrModelId;
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  status: 'idle' | 'downloading' | 'verifying' | 'completed' | 'error';
+  error?: string;
+}
+
+export interface ScreenVisionCaptureResult {
+  text: string;
+  wordCount: number;
+  timestamp: number;
+  success: boolean;
+  error?: string;
+}
+
 export interface AppSettings {
   sttProvider: STTEngineType;
   transcriptionMode?: TranscriptionMode;
@@ -198,6 +260,8 @@ export interface AppSettings {
   temperature: number;
   maxTokens: number;
   profile: ContextProfile;
+  // ScreenVision: Text-first Screen Understanding & OCR Settings
+  screenVision?: ScreenVisionSettings;
   // Per-provider key presence map returned to UI (keys themselves are encrypted via safeStorage in main process)
   hasApiKeys?: Partial<Record<LlmProviderId, boolean>>;
   /** @deprecated retained for backward compatibility; use hasApiKeys. */
@@ -313,6 +377,13 @@ export const IPC_CHANNELS = {
   MACOS_PERMISSION_REQUEST: 'macos:permission-request',
   STT_ENGINES_GET: 'stt:engines-get',
   LLM_PROVIDERS_GET: 'llm:providers-get',
+  // ScreenVision: Text-first Screen Understanding & OCR
+  SCREENVISION_STATUS_GET: 'screenvision:status-get',
+  SCREENVISION_CAPTURE_NOW: 'screenvision:capture-now',
+  SCREENVISION_MODEL_DOWNLOAD: 'screenvision:model-download',
+  SCREENVISION_MODEL_DELETE: 'screenvision:model-delete',
+  SCREENVISION_DOWNLOAD_PROGRESS: 'screenvision:download-progress',
+  SCREENVISION_STATUS_CHANGED: 'screenvision:status-changed',
 } as const;
 
 export interface ElectronAPI {
@@ -353,6 +424,13 @@ export interface ElectronAPI {
   pauseParakeetDownload: () => Promise<boolean>;
   cancelParakeetDownload: () => Promise<boolean>;
   onParakeetDownloadProgress: (callback: (progress: ParakeetDownloadProgress) => void) => () => void;
+  // ScreenVision: Text-first Screen Understanding & OCR Management
+  getScreenVisionStatus: () => Promise<ScreenVisionStatus>;
+  captureScreenVisionNow: () => Promise<ScreenVisionCaptureResult>;
+  downloadOcrModel: (modelId: OcrModelId) => Promise<boolean>;
+  deleteOcrModel: (modelId: OcrModelId) => Promise<boolean>;
+  onOcrDownloadProgress: (callback: (progress: OcrDownloadProgress) => void) => () => void;
+  onScreenVisionStatusChanged: (callback: (status: ScreenVisionStatus) => void) => () => void;
   // Pluggable STT Engines
   getSttEngines: () => Promise<STTEngineInfo[]>;
   // Pluggable LLM Providers
