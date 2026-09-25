@@ -123,22 +123,6 @@
               ↻ New Session
             </button>
 
-          <!-- ScreenVision Scan Button -->
-          <button
-            type="button"
-            class="chip screenvision-chip"
-            [class.active]="isScanningScreen()"
-            (click)="scanScreenNow()"
-            (mouseenter)="showTooltip($event, 'ScreenVision OCR (' + (screenVisionStatus()?.lastScanWordCount || 0) + ' words captured) - Double Shift / ⌘⇧S')"
-            (mouseleave)="hideTooltip()"
-          >
-            @if (isScanningScreen()) {
-              <span class="spinner-sm"></span> Scanning...
-            } @else {
-              👁️ ScreenVision
-            }
-          </button>
-
           <!-- Click-through indicator / toggle -->
           <button
             type="button"
@@ -223,7 +207,7 @@
               type="button"
               class="action-btn icon-only danger"
               (click)="clearUnpinnedQuestions()"
-              (mouseenter)="showTooltip($event, 'Clear unpinned (⌘⇧C)')"
+              (mouseenter)="showTooltip($event, 'Clear unpinned')"
               (mouseleave)="hideTooltip()"
             >
               🗑
@@ -409,7 +393,7 @@
                       class="card-action-btn"
                       [class.active]="q.status === 'pinned'"
                       (click)="togglePin(q.id)"
-                      (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin question' : 'Pin question (⌘⇧P)')"
+                      (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin question' : 'Pin question')"
                       (mouseleave)="hideTooltip()"
                     >
                       📌
@@ -427,7 +411,7 @@
                       type="button"
                       class="card-action-btn"
                       (click)="copyAnswer(q)"
-                      (mouseenter)="showTooltip($event, 'Copy talking points (⌘⇧Y)')"
+                      (mouseenter)="showTooltip($event, 'Copy talking points')"
                       (mouseleave)="hideTooltip()"
                     >
                       📋
@@ -491,8 +475,8 @@
                         </div>
                       }
 
-                      <!-- Final LLM Prompt Used -->
-                      @if (q.contextSnapshot?.finalPrompt) {
+                      <!-- Final LLM Prompt Used (Dev Only) -->
+                      @if (isDev() && q.contextSnapshot?.finalPrompt) {
                         <div class="context-block block-prompt">
                           <div class="context-block-header-row">
                             <span class="context-block-label">🤖 Final LLM Prompt Used:</span>
@@ -533,23 +517,23 @@
                       <div class="header-left-meta">
                         <span class="talking-points-label">Talking Points</span>
                         <span class="mode-tag">{{ currentAnswer.mode }}</span>
-
-                        @if (q.answers && q.answers.length > 1) {
-                          <div class="version-pill-group">
-                            @for (ans of q.answers; track $index) {
-                              <button
-                                type="button"
-                                class="version-pill"
-                                [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
-                                (click)="selectAnswerVersion(q, $index, $event)"
-                                [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
-                              >
-                                v{{ $index + 1 }}
-                              </button>
-                            }
-                          </div>
-                        }
                       </div>
+
+                      @if (q.answers && q.answers.length > 1) {
+                        <div class="version-pill-group">
+                          @for (ans of q.answers; track $index) {
+                            <button
+                              type="button"
+                              class="version-pill"
+                              [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
+                              (click)="selectAnswerVersion(q, $index, $event)"
+                              [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
+                            >
+                              v{{ $index + 1 }}
+                            </button>
+                          }
+                        </div>
+                      }
                     </div>
 
                     <ul class="bullets-list">
@@ -574,7 +558,7 @@
                     </ul>
 
                     @if (currentAnswer.code) {
-                      <div class="code-block">
+                      <div class="code-block" [style.background]="codeContainerBg()">
                         <div class="code-header">Example snippet</div>
                         <pre><code [innerHTML]="getHighlightedCode(currentAnswer.code)"></code></pre>
                       </div>
@@ -643,11 +627,16 @@
                           @if (!answeredSegmentIds().has(seg.id) && !answeringSegmentIds().has(seg.id)) {
                             <button
                               type="button"
-                              class="seg-action-btn"
-                              (click)="startNewRowFrom(seg)"
-                              title="Start a new row for the next speech"
+                              class="seg-action-btn scan-btn"
+                              [disabled]="isScanningScreen()"
+                              (click)="scanScreenNow()"
+                              title="Scan screen content with OCR (Double Shift)"
                             >
-                              ＋ Row
+                              @if (isScanningScreen()) {
+                                <span class="spinner-sm"></span> Scanning...
+                              } @else {
+                                👁️ Scan Screen
+                              }
                             </button>
                             <button
                               type="button"
@@ -954,9 +943,6 @@
             <span class="hotkey-item"><kbd>↑↓←→</kbd> Move</span>
             <span class="hotkey-item"><kbd>⌘⇧H</kbd> Hide</span>
             <span class="hotkey-item"><kbd>⌘⇧M</kbd> Click-Thru</span>
-            <span class="hotkey-item"><kbd>⌘⇧C</kbd> Clear</span>
-            <span class="hotkey-item"><kbd>⌘⇧P</kbd> Pin</span>
-            <span class="hotkey-item"><kbd>⌘⇧Y</kbd> Copy</span>
             <span class="hotkey-item"><kbd>⌘⇧R</kbd> Regen</span>
           </div>
         }
@@ -1070,22 +1056,6 @@
                 ↻ New Session
               </button>
 
-              <!-- ScreenVision Scan Button -->
-              <button
-                type="button"
-                class="v2-pill-btn screenvision-pill"
-                [class.active]="isScanningScreen()"
-                (click)="scanScreenNow()"
-                (mouseenter)="showTooltip($event, 'ScreenVision OCR (' + (screenVisionStatus()?.lastScanWordCount || 0) + ' words captured) - Double Shift / ⌘⇧S')"
-                (mouseleave)="hideTooltip()"
-              >
-                @if (isScanningScreen()) {
-                  <span class="spinner-sm"></span> Scanning...
-                } @else {
-                  👁️ ScreenVision
-                }
-              </button>
-
               <!-- Click-through indicator / toggle -->
               <button
                 type="button"
@@ -1170,7 +1140,7 @@
                   type="button"
                   class="v2-action-tool icon danger"
                   (click)="clearUnpinnedQuestions()"
-                  (mouseenter)="showTooltip($event, 'Clear unpinned questions (⌘⇧C)')"
+                  (mouseenter)="showTooltip($event, 'Clear unpinned questions')"
                   (mouseleave)="hideTooltip()"
                 >
                   🗑
@@ -1255,6 +1225,13 @@
             </div>
           </div>
         </header>
+
+        <!-- Toast Notification (V2 HUD) -->
+        @if (toastMessage()) {
+          <div class="toast-banner v2-toast-banner">
+            {{ toastMessage() }}
+          </div>
+        }
 
         <!-- Live Speech Ticker (V2 HUD) -->
         @if (latestSpeech(); as speech) {
@@ -1347,7 +1324,7 @@
                         class="v2-card-btn"
                         [class.active]="q.status === 'pinned'"
                         (click)="togglePin(q.id)"
-                        (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin' : 'Pin question (⌘⇧P)')"
+                        (mouseenter)="showTooltip($event, q.status === 'pinned' ? 'Unpin' : 'Pin question')"
                         (mouseleave)="hideTooltip()"
                       >
                         📌
@@ -1365,7 +1342,7 @@
                         type="button"
                         class="v2-card-btn"
                         (click)="copyAnswer(q)"
-                        (mouseenter)="showTooltip($event, 'Copy points (⌘⇧Y)')"
+                        (mouseenter)="showTooltip($event, 'Copy points')"
                         (mouseleave)="hideTooltip()"
                       >
                         📋
@@ -1429,8 +1406,8 @@
                           </div>
                         }
 
-                        <!-- Final LLM Prompt Used -->
-                        @if (q.contextSnapshot?.finalPrompt) {
+                        <!-- Final LLM Prompt Used (Dev Only) -->
+                        @if (isDev() && q.contextSnapshot?.finalPrompt) {
                           <div class="v2-context-block block-prompt">
                             <div class="v2-context-header-row">
                               <span class="v2-context-label">🤖 Final LLM Prompt Used:</span>
@@ -1471,23 +1448,23 @@
                         <div class="v2-top-left-meta">
                           <span class="v2-talking-label">TALKING POINTS</span>
                           <span class="v2-tone-tag">{{ currentAnswer.mode }}</span>
-
-                          @if (q.answers && q.answers.length > 1) {
-                            <div class="v2-version-pill-group">
-                              @for (ans of q.answers; track $index) {
-                                <button
-                                  type="button"
-                                  class="v2-version-pill"
-                                  [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
-                                  (click)="selectAnswerVersion(q, $index, $event)"
-                                  [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
-                                >
-                                  v{{ $index + 1 }}
-                                </button>
-                              }
-                            </div>
-                          }
                         </div>
+
+                        @if (q.answers && q.answers.length > 1) {
+                          <div class="v2-version-pill-group">
+                            @for (ans of q.answers; track $index) {
+                              <button
+                                type="button"
+                                class="v2-version-pill"
+                                [class.active]="$index === (q.activeAnswerIndex ?? (q.answers.length - 1))"
+                                (click)="selectAnswerVersion(q, $index, $event)"
+                                [title]="'Switch to version v' + ($index + 1) + ' (' + ans.mode + ')'"
+                              >
+                                v{{ $index + 1 }}
+                              </button>
+                            }
+                          </div>
+                        }
                       </div>
 
                       <ul class="v2-bullet-list">
@@ -1512,7 +1489,7 @@
                       </ul>
 
                       @if (currentAnswer.code) {
-                        <div class="v2-code-container">
+                        <div class="v2-code-container" [style.background]="codeContainerBg()">
                           <div class="v2-code-label">Example Snippet</div>
                           <pre><code [innerHTML]="getHighlightedCode(currentAnswer.code)"></code></pre>
                         </div>
@@ -1576,11 +1553,16 @@
                             @if (!answeredSegmentIds().has(seg.id) && !answeringSegmentIds().has(seg.id)) {
                               <button
                                 type="button"
-                                class="seg-action-btn"
-                                (click)="startNewRowFrom(seg)"
-                                title="Start a new row for the next speech"
+                                class="seg-action-btn scan-btn"
+                                [disabled]="isScanningScreen()"
+                                (click)="scanScreenNow()"
+                                title="Scan screen content with OCR (Double Shift)"
                               >
-                                ＋ Row
+                                @if (isScanningScreen()) {
+                                  <span class="spinner-sm"></span> Scanning...
+                                } @else {
+                                  👁️ Scan Screen
+                                }
                               </button>
                               <button
                                 type="button"
@@ -1869,7 +1851,6 @@
             <span class="v2-footer-shortcut"><kbd>↑↓←→</kbd> Move</span>
             <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧H' : 'Ctrl+Shift+H' }}</kbd> Hide</span>
             <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧M' : 'Ctrl+Shift+M' }}</kbd> Passthrough</span>
-            <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧C' : 'Ctrl+Shift+C' }}</kbd> Clear</span>
             <span class="v2-footer-shortcut"><kbd>{{ isMacOS ? '⌘⇧Q' : 'Ctrl+Shift+Q' }}</kbd> Quit</span>
           </div>
         </footer>

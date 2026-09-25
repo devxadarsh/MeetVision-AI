@@ -3,8 +3,10 @@ import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain
 if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
 }
+import * as fs from 'fs';
 import * as path from 'path';
 import * as url from 'url';
+import { GlobalKeyboardListener, IGlobalKeyEvent } from 'node-global-key-listener';
 import {
   IPC_CHANNELS,
   HotkeyAction,
@@ -50,19 +52,288 @@ const summaryService = new SummaryService(llmService);
 const screenVisionService = new ScreenVisionService(storeService);
 
 let lastShiftPressTime = 0;
+let globalKeyboardListener: GlobalKeyboardListener | null = null;
 
-function attachDoubleShiftListener(win: BrowserWindow, windowName: string): void {
+function getKeyServerPath(): string | undefined {
+  const binName = process.platform === 'win32' ? 'WinKeyServer.exe' : 'MacKeyServer';
+
+  // 1. Packaged app: process.resourcesPath/bin/<binName>
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath, 'bin', binName);
+    if (fs.existsSync(packagedPath)) return packagedPath;
+  }
+
+  // 2. Dev mode / resource path: electron/resources/bin/<binName>
+  const resourcePath = path.join(__dirname, '..', 'electron', 'resources', 'bin', binName);
+  if (fs.existsSync(resourcePath)) return resourcePath;
+
+  // 3. Project root resources/bin/<binName>
+  const rootResourcePath = path.join(process.cwd(), 'electron', 'resources', 'bin', binName);
+  if (fs.existsSync(rootResourcePath)) return rootResourcePath;
+
+  // 4. Node modules path
+  const nodeModulesPath = path.join(process.cwd(), 'node_modules', 'node-global-key-listener', 'bin', binName);
+  if (fs.existsSync(nodeModulesPath)) return nodeModulesPath;
+
+  return undefined;
+}
+
+let accessibilityPollTimer: NodeJS.Timeout | null = null;
+let lastAnswerTriggerTime = 0;
+
+function answerLatestConversation(): void {
+  const now = Date.now();
+  if (now - lastAnswerTriggerTime < 1000) {
+    console.log('[Main] Debouncing duplicate answerLatestConversation trigger');
+    return;
+  }
+  lastAnswerTriggerTime = now;
+
+  // If mainWindow exists and is active, let renderer handle it via IPC so that
+  // the exact same UI flow as clicking '⚡ Give Answer' runs (creates draft row,
+  // marks row answering, and calls backend answerQuestion).
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.getOpacity() === 0) {
+      mainWindow.setOpacity(1);
+      mainWindow.setIgnoreMouseEvents(false);
+    }
+    console.log('[Main] Delegating double-Alt answer trigger to renderer window');
+    mainWindow.webContents.send(IPC_CHANNELS.HOTKEY_TRIGGERED, 'answer-latest');
+    return;
+  }
+
+  // Fallback: If mainWindow is not available, find and answer directly in main process
+  const allQuestions = Array.from(questionsMap.values());
+  let targetQuestion = [...allQuestions].reverse().find((q) => q.status === 'unanswered');
+
+  if (!targetQuestion && allQuestions.length > 0) {
+    targetQuestion = allQuestions[allQuestions.length - 1];
+  }
+
+  if (!targetQuestion) {
+    const history = sttService.transcriptManager.getHistory();
+    const latestSegment = [...history].reverse().find((s) => s.text.trim().length > 0);
+    if (latestSegment) {
+      const newId = `q-conv-${Date.now()}`;
+      targetQuestion = {
+        id: newId,
+        sessionId: 'session-live',
+        text: latestSegment.text.trim(),
+        speaker: latestSegment.speaker || 'Speaker',
+        askedAt: Date.now(),
+        status: 'unanswered',
+      };
+      questionsMap.set(newId, targetQuestion);
+    }
+  }
+
+  if (targetQuestion) {
+    console.log(`[Main] Fallback answering latest conversation item: "${targetQuestion.text.slice(0, 60)}"`);
+    generateAnswerForQuestion(targetQuestion);
+  } else {
+    console.log('[Main] No conversation speech or questions found to answer yet.');
+  }
+}
+
+function startGlobalShiftListener(): boolean {
+  if (globalKeyboardListener) return true;
+
+  const serverPath = getKeyServerPath();
+  console.log('[ScreenVision] Starting global key listener with serverPath:', serverPath);
+
+  if (process.platform !== 'win32' && serverPath && fs.existsSync(serverPath)) {
+    try {
+      fs.chmodSync(serverPath, 0o755);
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const listenerConfig: any = {};
+    if (serverPath) {
+      if (process.platform === 'darwin') {
+        listenerConfig.mac = {
+          serverPath,
+          onError: (errorCode: number | null) => {
+            console.warn(`[ScreenVision] MacKeyServer closed (code: ${errorCode}).`);
+            if (globalKeyboardListener) {
+              try {
+                globalKeyboardListener.kill();
+              } catch {}
+              globalKeyboardListener = null;
+            }
+            if (process.platform === 'darwin' && !systemPreferences.isTrustedAccessibilityClient(false)) {
+              pollForAccessibilityPermission();
+            }
+          },
+          onInfo: (msg: string) => {
+            console.log('[ScreenVision] MacKeyServer info:', msg.trim());
+          },
+        };
+      } else if (process.platform === 'win32') {
+        listenerConfig.windows = {
+          serverPath,
+          onError: (errorCode: number) => {
+            console.warn(`[ScreenVision] WinKeyServer closed (code: ${errorCode}).`);
+            if (globalKeyboardListener) {
+              try {
+                globalKeyboardListener.kill();
+              } catch {}
+              globalKeyboardListener = null;
+            }
+          },
+        };
+      }
+    }
+
+    globalKeyboardListener = new GlobalKeyboardListener(listenerConfig);
+
+    let isShiftDown = false;
+    let globalLastShiftPressTime = 0;
+    let isAltDown = false;
+    let globalLastAltPressTime = 0;
+    const DOUBLE_TAP_MAX_INTERVAL_MS = 450;
+    const DOUBLE_TAP_MIN_INTERVAL_MS = 50;
+
+    globalKeyboardListener.addListener((event: IGlobalKeyEvent) => {
+      const isShiftKey = event.name === 'LEFT SHIFT' || event.name === 'RIGHT SHIFT';
+      const isAltKey = event.name === 'LEFT ALT' || event.name === 'RIGHT ALT';
+
+      if (event.state === 'DOWN') {
+        if (isShiftKey) {
+          globalLastAltPressTime = 0;
+          if (isShiftDown) return;
+          isShiftDown = true;
+          const now = Date.now();
+          const interval = now - globalLastShiftPressTime;
+
+          if (interval >= DOUBLE_TAP_MIN_INTERVAL_MS && interval <= DOUBLE_TAP_MAX_INTERVAL_MS) {
+            globalLastShiftPressTime = 0;
+            console.log('[ScreenVision] Global double-Shift detected -> Triggering screen scan');
+            screenVisionService.captureScreen().catch((err) => {
+              console.warn('[ScreenVision] Error in global double-Shift triggered capture:', err);
+            });
+          } else {
+            globalLastShiftPressTime = now;
+          }
+        } else if (isAltKey) {
+          globalLastShiftPressTime = 0;
+          if (isAltDown) return;
+          isAltDown = true;
+          const now = Date.now();
+          const interval = now - globalLastAltPressTime;
+
+          if (interval >= DOUBLE_TAP_MIN_INTERVAL_MS && interval <= DOUBLE_TAP_MAX_INTERVAL_MS) {
+            globalLastAltPressTime = 0;
+            console.log('[Main] Global double-Alt detected -> Answering latest conversation');
+            answerLatestConversation();
+          } else {
+            globalLastAltPressTime = now;
+          }
+        } else {
+          globalLastShiftPressTime = 0;
+          globalLastAltPressTime = 0;
+        }
+      } else if (event.state === 'UP') {
+        if (isShiftKey) {
+          isShiftDown = false;
+        } else if (isAltKey) {
+          isAltDown = false;
+        }
+      }
+    });
+
+    console.log('[Main] Global keyboard listener active. Double-Shift (OCR) & Double-Alt (Answer) globally enabled.');
+    return true;
+  } catch (err) {
+    console.warn('[Main] Failed to start GlobalKeyboardListener:', err);
+    globalKeyboardListener = null;
+    return false;
+  }
+}
+
+function pollForAccessibilityPermission(): void {
+  if (accessibilityPollTimer) return;
+
+  console.log(
+    '[ScreenVision] Polling for macOS Accessibility permission... (Waiting for user to enable in System Settings)'
+  );
+
+  accessibilityPollTimer = setInterval(() => {
+    if (systemPreferences.isTrustedAccessibilityClient(false)) {
+      console.log('[ScreenVision] macOS Accessibility permission granted! Launching global double-Shift listener...');
+      if (accessibilityPollTimer) {
+        clearInterval(accessibilityPollTimer);
+        accessibilityPollTimer = null;
+      }
+      startGlobalShiftListener();
+    }
+  }, 2000);
+}
+
+function initGlobalShiftListener(): void {
+  // On macOS, check / prompt for Accessibility permission required for global event taps
+  if (process.platform === 'darwin') {
+    const isTrusted = systemPreferences.isTrustedAccessibilityClient(false);
+    if (!isTrusted) {
+      console.warn(
+        '\n' +
+        '=========================================================================================\n' +
+        '[ScreenVision] macOS Accessibility Permission Required for Global Double-Shift / Double-Alt:\n' +
+        '1. Open "System Settings > Privacy & Security > Accessibility"\n' +
+        '2. Turn ON the toggle for "Electron" (in development) or "MeetVision AI" (in production).\n' +
+        '3. Double-Shift and Double-Alt will activate automatically as soon as the toggle is enabled!\n' +
+        'Note: Command+Shift+S remains active globally at all times without requiring Accessibility.\n' +
+        '=========================================================================================\n'
+      );
+      // Trigger native macOS permission prompt modal/dialog
+      systemPreferences.isTrustedAccessibilityClient(true);
+      // Start waiting for the user to grant permission
+      pollForAccessibilityPermission();
+      return;
+    }
+  }
+
+  startGlobalShiftListener();
+}
+
+let lastAltPressTime = 0;
+
+function attachDoubleModifierListener(win: BrowserWindow, windowName: string): void {
   win.webContents.on('before-input-event', (_event, input) => {
-    if (input.type === 'keyDown' && (input.key === 'Shift' || input.code?.startsWith('Shift'))) {
-      const now = Date.now();
-      if (now - lastShiftPressTime <= 450) {
+    // If native global listener is active, it already captures double-Shift and double-Alt globally
+    if (globalKeyboardListener) return;
+
+    if (input.type === 'keyDown') {
+      const isShift = input.key === 'Shift' || input.code?.startsWith('Shift');
+      const isAlt = input.key === 'Alt' || input.code?.startsWith('Alt');
+
+      if (isShift) {
+        lastAltPressTime = 0;
+        const now = Date.now();
+        if (now - lastShiftPressTime <= 450 && now - lastShiftPressTime >= 50) {
+          lastShiftPressTime = 0;
+          console.log(`[ScreenVision] In-window Double Shift detected from ${windowName} -> Triggering screen scan`);
+          screenVisionService.captureScreen().catch((err) => {
+            console.warn('[ScreenVision] Error in double-Shift triggered capture:', err);
+          });
+        } else {
+          lastShiftPressTime = now;
+        }
+      } else if (isAlt) {
         lastShiftPressTime = 0;
-        console.log(`[ScreenVision] Double Shift detected from ${windowName} -> Triggering screen scan`);
-        screenVisionService.captureScreen().catch((err) => {
-          console.warn('[ScreenVision] Error in double-Shift triggered capture:', err);
-        });
+        const now = Date.now();
+        if (now - lastAltPressTime <= 450 && now - lastAltPressTime >= 50) {
+          lastAltPressTime = 0;
+          console.log(`[Main] In-window Double Alt detected from ${windowName} -> Answering latest conversation`);
+          answerLatestConversation();
+        } else {
+          lastAltPressTime = now;
+        }
       } else {
-        lastShiftPressTime = now;
+        lastShiftPressTime = 0;
+        lastAltPressTime = 0;
       }
     }
   });
@@ -156,7 +427,7 @@ function createOverlayWindow(): void {
     console.warn('setContentProtection failed:', err);
   }
 
-  attachDoubleShiftListener(mainWindow, 'OverlayWindow');
+  attachDoubleModifierListener(mainWindow, 'OverlayWindow');
 
   if (isDev) {
     const devUrl = 'http://localhost:4200/#/overlay';
@@ -284,7 +555,7 @@ function createSettingsWindow(): void {
     settingsWindow.loadURL(url.pathToFileURL(distPath).href + '#/settings');
   }
 
-  attachDoubleShiftListener(settingsWindow, 'SettingsWindow');
+  attachDoubleModifierListener(settingsWindow, 'SettingsWindow');
 
   broadcastSettingsVisibility(true);
 
@@ -350,21 +621,6 @@ function registerHotkeys(): void {
     setClickThrough(!isClickThrough);
   });
 
-  // Clear questions
-  globalShortcut.register('CommandOrControl+Shift+C', () => {
-    sendHotkeyToRenderer('clear');
-  });
-
-  // Pin latest question
-  globalShortcut.register('CommandOrControl+Shift+P', () => {
-    sendHotkeyToRenderer('pin');
-  });
-
-  // Copy latest answer
-  globalShortcut.register('CommandOrControl+Shift+Y', () => {
-    sendHotkeyToRenderer('copy-answer');
-  });
-
   // Regenerate answer
   globalShortcut.register('CommandOrControl+Shift+R', () => {
     sendHotkeyToRenderer('regenerate');
@@ -390,6 +646,9 @@ function registerHotkeys(): void {
     console.log('[Hotkey] ScreenVision scan triggered via CommandOrControl+Shift+S');
     await screenVisionService.captureScreen();
   });
+
+  // Native global double-Shift standalone modifier listener
+  initGlobalShiftListener();
 }
 
 function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void {
@@ -446,6 +705,7 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
       model: settings.llmModel,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
+      modeTokens: settings.modeTokens,
       thinkingEnabled: Boolean(settings.llmThinkingEnabled),
       codeLanguage: settings.codeLanguage,
       knowledgeSnippets: relevantSnippets,
@@ -688,6 +948,13 @@ function registerIpcHandlers(): void {
 
   // Clear transcript
   ipcMain.handle(IPC_CHANNELS.TRANSCRIPT_CLEAR, async () => {
+    recentTranscript.length = 0;
+    // Clear conversation/transcript-derived questions from questionsMap
+    for (const [id, q] of questionsMap.entries()) {
+      if (id.startsWith('q-seg-') || id.startsWith('q-conv-') || q.sessionId === 'session-live') {
+        questionsMap.delete(id);
+      }
+    }
     await sttService.stop();
     const settings = storeService.getSettings();
     await sttService.start(handleTranscriptSegment, {
@@ -700,6 +967,17 @@ function registerIpcHandlers(): void {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPT_CLEAR);
     }
+  });
+
+  // Clear unpinned questions
+  ipcMain.handle(IPC_CHANNELS.QUESTIONS_CLEAR, async () => {
+    console.log('[Main] Clearing unpinned questions from questionsMap');
+    for (const [id, q] of questionsMap.entries()) {
+      if (q.status !== 'pinned') {
+        questionsMap.delete(id);
+      }
+    }
+    return true;
   });
 
   // Regenerate Answer (Milestones 3, 4 & 7)
@@ -780,9 +1058,27 @@ function registerIpcHandlers(): void {
 
       if (!targetQuestion) {
         const allQuestions = Array.from(questionsMap.values());
-        targetQuestion =
-          [...allQuestions].reverse().find((q) => q.status === 'unanswered') ||
-          allQuestions[allQuestions.length - 1];
+        targetQuestion = [...allQuestions].reverse().find((q) => q.status === 'unanswered');
+      }
+
+      if (!targetQuestion) {
+        const history = sttService.transcriptManager.getHistory();
+        const latestSegment = [...history].reverse().find((s) => s.text.trim().length > 0);
+        if (latestSegment) {
+          const newId = questionId || `q-seg-${Date.now()}`;
+          targetQuestion = {
+            id: newId,
+            sessionId: 'session-live',
+            text: latestSegment.text.trim(),
+            speaker: latestSegment.speaker || 'Speaker',
+            askedAt: Date.now(),
+            status: 'unanswered',
+          };
+          questionsMap.set(newId, targetQuestion);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.QUESTION_NEW, targetQuestion);
+          }
+        }
       }
 
       if (targetQuestion) {
@@ -807,7 +1103,10 @@ function registerIpcHandlers(): void {
 
   // Settings & Profile (Milestone 4)
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async () => {
-    return storeService.getSettings();
+    return {
+      ...storeService.getSettings(),
+      isDev,
+    };
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, async (_event, newSettings: Partial<AppSettings>) => {
@@ -923,6 +1222,7 @@ function registerIpcHandlers(): void {
       contentProtectionActive: Boolean(mainWindow && !mainWindow.isDestroyed()),
       sttConnected: sttService.isConnected(),
       activeWindows: windows.length,
+      isDev,
     };
   });
 
@@ -1228,7 +1528,19 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
+  if (accessibilityPollTimer) {
+    clearInterval(accessibilityPollTimer);
+    accessibilityPollTimer = null;
+  }
   globalShortcut.unregisterAll();
+  if (globalKeyboardListener) {
+    try {
+      globalKeyboardListener.kill();
+      globalKeyboardListener = null;
+    } catch (err) {
+      console.warn('[ScreenVision] Error killing global keyboard listener:', err);
+    }
+  }
   sttService.stop();
 });
 

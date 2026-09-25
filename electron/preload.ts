@@ -252,6 +252,9 @@ const api: ElectronAPI = {
   answerQuestion: (payload?: string | { questionId?: string; text?: string; speaker?: string }): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.QUESTION_ANSWER, payload);
   },
+  clearQuestions: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.QUESTIONS_CLEAR);
+  },
   resetSession: (): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SESSION_RESET);
   },

@@ -44,7 +44,36 @@ async function build() {
     console.log('[esbuild] Built electron main and preload successfully.');
   }
 
+  copyKeyServerBinaries();
   reportNativeRuntimes();
+}
+
+/**
+ * Copy precompiled global key listener helper binaries from node_modules into
+ * electron/resources/bin so they are bundled with electron-builder into production packages.
+ */
+function copyKeyServerBinaries() {
+  const srcDir = path.resolve(rootDir, 'node_modules', 'node-global-key-listener', 'bin');
+  const destDir = path.resolve(__dirname, 'resources', 'bin');
+  if (!fs.existsSync(srcDir)) return;
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const binaries = ['MacKeyServer', 'WinKeyServer.exe', 'X11KeyServer'];
+  for (const bin of binaries) {
+    const src = path.join(srcDir, bin);
+    const dest = path.join(destDir, bin);
+    if (fs.existsSync(src)) {
+      try {
+        fs.copyFileSync(src, dest);
+        if (process.platform !== 'win32' && bin !== 'WinKeyServer.exe') {
+          fs.chmodSync(src, 0o755);
+          fs.chmodSync(dest, 0o755);
+        }
+      } catch (err) {
+        console.warn(`[build] Failed copying key server binary ${bin}:`, err);
+      }
+    }
+  }
 }
 
 /**

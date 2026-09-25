@@ -1069,21 +1069,73 @@
           </span>
         </div>
 
-        <!-- Max Tokens -->
+        <!-- Max Tokens Ceiling -->
         <div class="form-group">
-          <label for="tokens-input" class="form-label">Max Output Tokens</label>
+          <label for="tokens-input" class="form-label">Max Output Tokens (Ceiling)</label>
           <input
             id="tokens-input"
             type="number"
-            min="100"
-            max="1500"
-            step="50"
+            min="200"
+            max="8000"
+            step="100"
             class="form-input"
             [value]="maxTokens()"
             (input)="onMaxTokensChange($event)"
           />
           <span class="field-hint">
-            Caps the response size for rapid bullet streaming during meetings (default: 500).
+            Global ceiling bounding maximum response length across all answer generation (default: 4000).
+          </span>
+        </div>
+
+        <!-- Mode-Specific Token Budgets -->
+        <div class="form-group">
+          <label class="form-label">Mode Token Limits</label>
+          <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 4px;">
+            <div>
+              <label for="short-tokens-input" class="field-hint" style="font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 4px;">Short Mode</label>
+              <input
+                id="short-tokens-input"
+                type="number"
+                min="100"
+                max="4000"
+                step="50"
+                class="form-input"
+                [value]="modeTokensShort()"
+                (input)="onModeTokensShortChange($event)"
+              />
+              <span class="field-hint" style="font-size: 11px;">Default: 500</span>
+            </div>
+            <div>
+              <label for="simple-tokens-input" class="field-hint" style="font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 4px;">Simple Mode</label>
+              <input
+                id="simple-tokens-input"
+                type="number"
+                min="100"
+                max="4000"
+                step="50"
+                class="form-input"
+                [value]="modeTokensSimple()"
+                (input)="onModeTokensSimpleChange($event)"
+              />
+              <span class="field-hint" style="font-size: 11px;">Default: 500</span>
+            </div>
+            <div>
+              <label for="detailed-tokens-input" class="field-hint" style="font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 4px;">Detailed Mode</label>
+              <input
+                id="detailed-tokens-input"
+                type="number"
+                min="200"
+                max="8000"
+                step="100"
+                class="form-input"
+                [value]="modeTokensDetailed()"
+                (input)="onModeTokensDetailedChange($event)"
+              />
+              <span class="field-hint" style="font-size: 11px;">Default: 1500</span>
+            </div>
+          </div>
+          <span class="field-hint" style="margin-top: 6px;">
+            Configure target token limits per answer mode to control verbosity when switching between Short, Simple, and Detailed.
           </span>
         </div>
       </section>
@@ -1947,36 +1999,6 @@
         <div class="shortcuts-section">
           <h3 class="shortcuts-category-title">💬 Question & Answer Controls</h3>
           <div class="shortcuts-grid">
-            <div class="shortcut-card">
-              <div class="shortcut-key">
-                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>C</kbd>
-              </div>
-              <div class="shortcut-desc">
-                <strong>Clear Unpinned Questions</strong>
-                <p>Remove all unpinned questions from the feed. Pinned questions remain visible.</p>
-              </div>
-            </div>
-
-            <div class="shortcut-card">
-              <div class="shortcut-key">
-                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>P</kbd>
-              </div>
-              <div class="shortcut-desc">
-                <strong>Pin Latest Question</strong>
-                <p>Pin the most recent question to keep it at the top of your feed. Use again to unpin.</p>
-              </div>
-            </div>
-
-            <div class="shortcut-card">
-              <div class="shortcut-key">
-                <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>Y</kbd>
-              </div>
-              <div class="shortcut-desc">
-                <strong>Copy Latest Answer</strong>
-                <p>Copy the talking points from the most recent answer to your clipboard for pasting.</p>
-              </div>
-            </div>
-
             <div class="shortcut-card">
               <div class="shortcut-key">
                 <kbd>{{ isMacOS ? '⌘' : 'Ctrl' }}</kbd> + <kbd>{{ isMacOS ? '⇧' : 'Shift' }}</kbd> + <kbd>R</kbd>

@@ -22,6 +22,11 @@ interface StoredConfigFile {
   codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
+  modeTokens?: {
+    short?: number;
+    simple?: number;
+    detailed?: number;
+  };
   profile: ContextProfile;
   screenVision?: ScreenVisionSettings;
   encryptedApiKeys?: Record<string, string>; // provider id -> base64 encoded ciphertext
@@ -64,6 +69,11 @@ const DEFAULT_SETTINGS: StoredConfigFile = {
   codeLanguage: 'auto',
   temperature: 0.3,
   maxTokens: 500,
+  modeTokens: {
+    short: 500,
+    simple: 500,
+    detailed: 1500,
+  },
   overlayOpacity: 0.88,
   overlayVersion: 'v1',
   multiWorkspace: true,
@@ -203,6 +213,7 @@ export class StoreService {
       codeLanguage: this.data.codeLanguage || 'auto',
       temperature: this.data.temperature,
       maxTokens: this.data.maxTokens,
+      modeTokens: this.data.modeTokens ? { ...this.data.modeTokens } : { short: 500, simple: 500, detailed: 1500 },
       profile: { ...this.data.profile },
       hasApiKeys,
       hasAnthropicKey: hasApiKeys.anthropic,
@@ -317,6 +328,12 @@ export class StoreService {
     }
     if (typeof newSettings.temperature === 'number') this.data.temperature = newSettings.temperature;
     if (typeof newSettings.maxTokens === 'number') this.data.maxTokens = newSettings.maxTokens;
+    if (newSettings.modeTokens) {
+      this.data.modeTokens = {
+        ...(this.data.modeTokens || { short: 500, simple: 500, detailed: 1500 }),
+        ...newSettings.modeTokens,
+      };
+    }
     if (newSettings.sttLanguage) this.data.sttLanguage = newSettings.sttLanguage;
     if (typeof newSettings.overlayWidth === 'number') this.data.overlayWidth = newSettings.overlayWidth;
     if (typeof newSettings.overlayHeight === 'number') this.data.overlayHeight = newSettings.overlayHeight;

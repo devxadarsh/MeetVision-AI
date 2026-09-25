@@ -269,6 +269,12 @@ export interface AppSettings {
   codeLanguage?: CodeLanguage;
   temperature: number;
   maxTokens: number;
+  /** Configurable token budgets per answer mode (short, simple, detailed). */
+  modeTokens?: {
+    short?: number;
+    simple?: number;
+    detailed?: number;
+  };
   profile: ContextProfile;
   // ScreenVision: Text-first Screen Understanding & OCR Settings
   screenVision?: ScreenVisionSettings;
@@ -301,6 +307,7 @@ export interface AppSettings {
   noiseSuppression?: boolean;
   echoCancellation?: boolean;
   autoGainControl?: boolean;
+  isDev?: boolean;
 }
 
 export type LlmProviderInfo = LlmProviderCatalogEntry;
@@ -320,6 +327,7 @@ export interface AppDiagnostics {
   contentProtectionActive: boolean;
   sttConnected: boolean;
   activeWindows: number;
+  isDev?: boolean;
 }
 
 export type HotkeyAction =
@@ -328,7 +336,8 @@ export type HotkeyAction =
   | 'clear'
   | 'pin'
   | 'copy-answer'
-  | 'regenerate';
+  | 'regenerate'
+  | 'answer-latest';
 
 export const IPC_CHANNELS = {
   PING: 'app:ping',
@@ -355,6 +364,7 @@ export const IPC_CHANNELS = {
   TRANSCRIPT_CLEAR: 'transcript:clear',
   QUESTION_NEW: 'question:new',
   QUESTION_ANSWER: 'question:answer',
+  QUESTIONS_CLEAR: 'questions:clear',
   ANSWER_CHUNK: 'answer:chunk',
   ANSWER_REGENERATE: 'answer:regenerate',
   SESSION_RESET: 'session:reset',
@@ -455,6 +465,7 @@ export interface ElectronAPI {
   onAnswerChunk: (callback: (chunk: AnswerChunk) => void) => () => void;
   regenerateAnswer: (payload: RegeneratePayload) => Promise<void>;
   answerQuestion: (payload?: string | AnswerQuestionPayload) => Promise<boolean>;
+  clearQuestions: () => Promise<boolean>;
   resetSession: () => Promise<boolean>;
   // Settings & Profile channels (Milestone 4)
   getSettings: () => Promise<AppSettings>;

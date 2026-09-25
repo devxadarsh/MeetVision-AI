@@ -400,6 +400,11 @@ export class IpcService {
     return this.api.answerQuestion(payload);
   }
 
+  async clearQuestions(): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.clearQuestions();
+  }
+
   async resetSession(): Promise<boolean> {
     if (!this.api) return true;
     return this.api.resetSession();

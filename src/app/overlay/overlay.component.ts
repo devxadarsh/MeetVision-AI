@@ -250,6 +250,13 @@ export class OverlayComponent implements OnInit, OnDestroy {
   readonly transcriptionMode = signal<TranscriptionMode>('everyone');
   readonly hasMicPermission = signal<boolean>(true);
   readonly isMacOS = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent || navigator.platform);
+  readonly isDev = signal<boolean>(false);
+
+  /** Dynamic background for code blocks, auto-adjusting to the user's overlay opacity slider. */
+  readonly codeContainerBg = computed(() => {
+    const alpha = Math.max(0.12, Math.min(0.40, this.overlayOpacity() * 0.30));
+    return `rgba(0, 0, 0, ${alpha.toFixed(3)})`;
+  });
 
   // Tab: 'questions' | 'transcript' | 'screenvision' | 'summary' (Milestones 2, 7 & ScreenVision)
   readonly currentTab = signal<'questions' | 'transcript' | 'screenvision' | 'summary'>('questions');
@@ -426,6 +433,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
   private unsubscribeTranscriptClear?: () => void;
   private unsubscribeScreenVisionStatus?: () => void;
   private lastShiftTime = 0;
+  private lastAltTime = 0;
+  private lastAnswerTriggerTime = 0;
+  private lastAnsweredTimestamp = 0;
+  private previousScanTimestamp: number | null = null;
 
   private rawBufferMap = new Map<string, string>();
   private templateIndex = 0;
@@ -462,6 +473,14 @@ export class OverlayComponent implements OnInit, OnDestroy {
       }
       if (settings.answerMode && ANSWER_MODE_TO_LABEL[settings.answerMode]) {
         this.selectedMode.set(ANSWER_MODE_TO_LABEL[settings.answerMode]);
+      }
+      if (typeof settings.isDev === 'boolean') {
+        this.isDev.set(settings.isDev);
+      } else {
+        const diag = await this.ipcService.getDiagnostics();
+        if (typeof diag.isDev === 'boolean') {
+          this.isDev.set(diag.isDev);
+        }
       }
       const perms = await this.ipcService.getMacosPermissions();
       this.hasMicPermission.set(perms.microphone === 'granted');
@@ -658,6 +677,21 @@ export class OverlayComponent implements OnInit, OnDestroy {
           const text = segment.text ? segment.text.trim() : '';
           if (!text) return;
 
+          // Guard against trailing in-flight utterance that was just answered:
+          // If the utterance was spoken before or at the time Give Answer / double-Alt was pressed,
+          // it belongs to the answered row and MUST NOT bleed into the fresh draft row!
+          if (
+            this.lastAnsweredTimestamp &&
+            (segment.startMs <= this.lastAnsweredTimestamp || Date.now() - this.lastAnsweredTimestamp < 1200)
+          ) {
+            const segments = this.transcriptSegments();
+            const last = segments[segments.length - 1];
+            if (last && (this.answeredSegmentIds().has(last.id) || this.answeringSegmentIds().has(last.id))) {
+              console.log('[Overlay] In-flight utterance finalized after answer trigger. Keeping draft row empty.');
+              return;
+            }
+          }
+
           const draft = this.draftRow();
 
           this.transcriptSegments.update((prev) => {
@@ -806,11 +840,28 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.ipcService.getScreenVisionStatus().then((status) => {
       if (status) {
         this.screenVisionStatus.set(status);
+        if (status.lastScanTimestamp) {
+          this.previousScanTimestamp = status.lastScanTimestamp;
+        }
       }
     }).catch(() => {});
 
     this.unsubscribeScreenVisionStatus = this.ipcService.onScreenVisionStatusChanged((status) => {
+      if (!status) return;
+      const prevTimestamp = this.previousScanTimestamp;
+
       this.screenVisionStatus.set(status);
+      this.isScanningScreen.set(status.isScanning);
+
+      // Trigger word-count toast whenever a scan finishes (global double-Shift, hotkey, or UI button)
+      if (!status.isScanning && status.lastScanTimestamp && status.lastScanTimestamp !== prevTimestamp) {
+        this.previousScanTimestamp = status.lastScanTimestamp;
+        if (status.error) {
+          this.showToast(status.error);
+        } else {
+          this.showToast(`👁️ ScreenVision: extracted ${status.lastScanWordCount} words`);
+        }
+      }
     });
   }
 
@@ -819,10 +870,8 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.isScanningScreen.set(true);
     try {
       const res = await this.ipcService.captureScreenVisionNow();
-      if (res && res.success) {
-        this.showToast(`👁️ ScreenVision: extracted ${res.wordCount} words`);
-      } else {
-        this.showToast(res?.error || 'Screen capture failed');
+      if (res && !res.success && res.error) {
+        this.showToast(res.error);
       }
     } catch (err: any) {
       this.showToast(err?.message || 'Screen capture error');
@@ -1174,6 +1223,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
       copy.delete(segment.id);
       return copy;
     });
+    this.lastAnsweredTimestamp = Date.now();
     this.answeringSegmentIds.update((set) => new Set(set).add(segment.id));
 
     this.showToast(`Re-answering (${mode})...`);
@@ -1460,13 +1510,14 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
   /** Opens a fresh, empty draft row to receive the next utterance. */
   private startDraftRow(speaker?: string): void {
+    const defaultSpeaker = speaker || this.activeLiveSpeaker() || (this.transcriptionMode() === 'other-only' ? 'Other' : 'You');
     this.draftRow.set({
       id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       text: '',
       isFinal: false,
       startMs: Date.now(),
       endMs: Date.now(),
-      speaker: speaker || this.activeLiveSpeaker() || undefined,
+      speaker: defaultSpeaker,
     });
   }
 
@@ -1488,6 +1539,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
       return;
     }
 
+    this.lastAnsweredTimestamp = Date.now();
     this.answeringSegmentIds.update((set) => new Set(set).add(segment.id));
     this.showToast('Synthesizing answer talking points...');
 
@@ -1510,6 +1562,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   async startNewSession(): Promise<void> {
+    this.lastAnsweredTimestamp = 0;
     this.questions.set([]);
     this.collapsedIds.set(new Set());
     this.transcriptSegments.set([]);
@@ -1566,6 +1619,10 @@ export class OverlayComponent implements OnInit, OnDestroy {
 
       case 'regenerate':
         this.regenerateTopQuestion();
+        break;
+
+      case 'answer-latest':
+        this.answerLatestConversation();
         break;
 
       default:
@@ -1632,6 +1689,7 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   async clearTranscript(): Promise<void> {
+    this.lastAnsweredTimestamp = 0;
     this.transcriptSegments.set([]);
     this.draftRow.set(null);
     this.activeInterim.set(null);
@@ -1770,6 +1828,11 @@ export class OverlayComponent implements OnInit, OnDestroy {
       this.rawBufferMap.delete(q.id);
     }
     this.questions.update((list) => list.filter((q) => q.status === 'pinned'));
+    if (this.isElectron()) {
+      this.ipcService.clearQuestions().catch((err) => {
+        console.warn('[OverlayComponent] Failed to clear questions in main:', err);
+      });
+    }
     this.showToast('Cleared questions');
   }
 
@@ -1977,15 +2040,30 @@ export class OverlayComponent implements OnInit, OnDestroy {
     }
 
     if (event.key === 'Shift') {
-      const now = Date.now();
-      if (now - this.lastShiftTime <= 450) {
-        this.lastShiftTime = 0;
-        this.scanScreenNow();
-        return;
+      this.lastAltTime = 0;
+      if (!this.isElectron()) {
+        const now = Date.now();
+        if (now - this.lastShiftTime <= 450 && now - this.lastShiftTime >= 50) {
+          this.lastShiftTime = 0;
+          this.scanScreenNow();
+          return;
+        }
+        this.lastShiftTime = now;
       }
-      this.lastShiftTime = now;
+    } else if (event.key === 'Alt') {
+      this.lastShiftTime = 0;
+      if (!this.isElectron()) {
+        const now = Date.now();
+        if (now - this.lastAltTime <= 450 && now - this.lastAltTime >= 50) {
+          this.lastAltTime = 0;
+          this.answerLatestConversation();
+          return;
+        }
+        this.lastAltTime = now;
+      }
     } else {
       this.lastShiftTime = 0;
+      this.lastAltTime = 0;
     }
 
     let deltaX = 0;
@@ -2050,6 +2128,93 @@ export class OverlayComponent implements OnInit, OnDestroy {
     this.tooltipPosition.set({ x: Math.round(clampedX), y: Math.round(y) });
     this.tooltipArrowOffset.set(Math.round(arrowOffset));
     this.tooltipText.set(text);
+  }
+
+  answerLatestConversation(): void {
+    const now = Date.now();
+    if (now - this.lastAnswerTriggerTime < 1000) {
+      console.log('[Overlay] Debouncing duplicate answerLatestConversation trigger');
+      return;
+    }
+    this.lastAnswerTriggerTime = now;
+
+    const segments = this.transcriptSegments();
+    const currentInterim = (this.activeInterimText() || this.activeLiveText()).trim();
+
+    // 1. Look for the latest transcript segment that hasn't been answered yet
+    const latestUnanswered = [...segments].reverse().find(
+      (s) => s.text && s.text.trim().length > 0 && !this.answeredSegmentIds().has(s.id) && !this.answeringSegmentIds().has(s.id)
+    );
+
+    if (latestUnanswered) {
+      // If there is pending interim speech on this active row, merge it into the row first so the answered question is complete
+      if (currentInterim && !latestUnanswered.text.toLowerCase().includes(currentInterim.toLowerCase())) {
+        const cleanTail = this.formatTurnText(currentInterim);
+        latestUnanswered.text = `${latestUnanswered.text.trim()} ${cleanTail}`.trim();
+        this.transcriptSegments.update((list) =>
+          list.map((item) => (item.id === latestUnanswered.id ? { ...latestUnanswered } : item))
+        );
+      }
+      this.activeInterim.set(null);
+      this.activeLiveText.set('');
+      this.isSpeaking.set(false);
+      this.giveAnswerForSegment(latestUnanswered);
+      return;
+    }
+
+    // 2. If no unanswered segment exists in history, but there is active live / interim speech:
+    if (currentInterim) {
+      const speaker = this.activeInterimSpeaker();
+      const newSegmentId = `seg-${Date.now()}`;
+      const cleanText = this.formatTurnText(currentInterim);
+      const newSeg: TranscriptSegment = {
+        id: newSegmentId,
+        text: cleanText,
+        isFinal: true,
+        startMs: Date.now(),
+        endMs: Date.now(),
+        speaker,
+        turns: [{ speaker, text: cleanText, timestamp: Date.now() }],
+      };
+      this.activeInterim.set(null);
+      this.activeLiveText.set('');
+      this.isSpeaking.set(false);
+      this.transcriptSegments.update((prev) => [...prev, newSeg]);
+      this.giveAnswerForSegment(newSeg);
+      return;
+    }
+
+    // Check if the latest segment is currently already being answered
+    const latestSeg = segments.length > 0 ? segments[segments.length - 1] : null;
+    if (latestSeg && this.answeringSegmentIds().has(latestSeg.id)) {
+      console.log('[Overlay] Latest segment is already answering. Skipping duplicate trigger.');
+      return;
+    }
+
+    // 3. If all segments are already answered, re-answer the latest segment and open fresh draft row
+    if (latestSeg && latestSeg.text && latestSeg.text.trim() && this.answeredSegmentIds().has(latestSeg.id)) {
+      this.reanswerForSegment(latestSeg);
+      return;
+    }
+
+    // 4. If current draft row has text, finalize and answer it
+    const draft = this.draftRow();
+    if (draft && draft.text && draft.text.trim()) {
+      this.giveAnswerForSegment(draft);
+      return;
+    }
+
+    // 5. Fallback: if questions already exist in Questions list and are UNANSWERED
+    const questions = this.questions();
+    const targetQ = [...questions].reverse().find((q) => q.status === 'unanswered');
+    if (targetQ) {
+      this.triggerAnswer(targetQ.id);
+      this.startDraftRow();
+      return;
+    }
+
+    // If nothing is pending, do not randomly answer an old completed question
+    this.showToast('No active conversation to answer.');
   }
 
   hideTooltip(): void {

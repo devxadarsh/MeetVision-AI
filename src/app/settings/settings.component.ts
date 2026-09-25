@@ -223,7 +223,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly codeLanguage = signal<CodeLanguage>('auto');
   readonly codeLanguages = CODE_LANGUAGES;
   readonly temperature = signal(0.3);
-  readonly maxTokens = signal(500);
+  readonly maxTokens = signal(4000);
+  readonly modeTokensShort = signal(500);
+  readonly modeTokensSimple = signal(500);
+  readonly modeTokensDetailed = signal(1500);
 
   // Active LLM provider metadata + its model list (data-driven UI).
   readonly activeLlmProvider = computed(() => {
@@ -440,7 +443,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.llmThinkingEnabled.set(Boolean(settings.llmThinkingEnabled));
     this.codeLanguage.set(settings.codeLanguage || 'auto');
     this.temperature.set(typeof settings.temperature === 'number' ? settings.temperature : 0.3);
-    this.maxTokens.set(settings.maxTokens || 500);
+    this.maxTokens.set(settings.maxTokens || 4000);
+    if (settings.modeTokens) {
+      if (typeof settings.modeTokens.short === 'number') this.modeTokensShort.set(settings.modeTokens.short);
+      if (typeof settings.modeTokens.simple === 'number') this.modeTokensSimple.set(settings.modeTokens.simple);
+      if (typeof settings.modeTokens.detailed === 'number') this.modeTokensDetailed.set(settings.modeTokens.detailed);
+    }
 
     // Key Statuses
     this.hasApiKeys.set(settings.hasApiKeys ?? {});
@@ -782,7 +790,22 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   onMaxTokensChange(event: Event): void {
     const target = event.target as HTMLInputElement;
-    this.maxTokens.set(parseInt(target.value, 10) || 500);
+    this.maxTokens.set(parseInt(target.value, 10) || 4000);
+  }
+
+  onModeTokensShortChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.modeTokensShort.set(parseInt(target.value, 10) || 500);
+  }
+
+  onModeTokensSimpleChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.modeTokensSimple.set(parseInt(target.value, 10) || 500);
+  }
+
+  onModeTokensDetailedChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.modeTokensDetailed.set(parseInt(target.value, 10) || 1500);
   }
 
   onApiKeyChange(providerId: LlmProviderId, event: Event): void {
@@ -904,6 +927,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
       codeLanguage: this.codeLanguage(),
       temperature: this.temperature(),
       maxTokens: this.maxTokens(),
+      modeTokens: {
+        short: this.modeTokensShort(),
+        simple: this.modeTokensSimple(),
+        detailed: this.modeTokensDetailed(),
+      },
       overlayWidth: this.overlayWidth(),
       overlayHeight: this.overlayHeight(),
       overlayOpacity: this.overlayOpacity(),

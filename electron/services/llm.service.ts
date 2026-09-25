@@ -11,6 +11,11 @@ export interface LlmStreamOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  modeTokens?: {
+    short?: number;
+    simple?: number;
+    detailed?: number;
+  };
   thinkingEnabled?: boolean;
   codeLanguage?: CodeLanguage;
   knowledgeSnippets?: { title: string; snippet: string }[];
@@ -120,8 +125,19 @@ export function classifyQuestion(text: string): AnswerIntent {
   return 'design';
 }
 
-/** Dynamic output-token ceiling: intent base × mode factor, floored at the user's setting. */
-export function tokensFor(intent: AnswerIntent, mode: AnswerMode, userCeiling?: number): number {
+/** Dynamic output-token ceiling: user-configured mode token budget or intent base × mode factor, bounded by userCeiling. */
+export function tokensFor(
+  intent: AnswerIntent,
+  mode: AnswerMode,
+  userCeiling?: number,
+  modeTokens?: { short?: number; simple?: number; detailed?: number }
+): number {
+  const configuredModeTokens = modeTokens?.[mode];
+  if (typeof configuredModeTokens === 'number' && configuredModeTokens > 0) {
+    const ceiling = userCeiling && userCeiling > 0 ? userCeiling : HARD_TOKEN_CEILING;
+    return Math.max(100, Math.min(configuredModeTokens, ceiling));
+  }
+
   const base = Math.round(INTENT_BASE_TOKENS[intent] * MODE_TOKEN_FACTOR[mode]);
   const userFloor = Math.min(Math.max(userCeiling || 0, MIN_TOKEN_FLOOR), HARD_TOKEN_CEILING);
   return Math.max(Math.min(base, HARD_TOKEN_CEILING), userFloor);
@@ -178,7 +194,7 @@ export class LlmService implements ILlmService {
       knowledgeSnippets: options.knowledgeSnippets,
       model: options.model || 'deepseek-flash',
       temperature: typeof options.temperature === 'number' ? options.temperature : 0.3,
-      maxTokens: tokensFor(intent, mode, options.maxTokens),
+      maxTokens: tokensFor(intent, mode, options.maxTokens, options.modeTokens),
       apiKey: options.apiKey,
       thinkingEnabled: options.thinkingEnabled,
     };
