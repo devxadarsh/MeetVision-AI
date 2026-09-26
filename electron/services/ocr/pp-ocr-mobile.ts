@@ -87,12 +87,111 @@ function run(argv) {
   var handler = $.VNImageRequestHandler.alloc.initWithDataOptions(imgData, $());
   if (!handler.performRequestsError($([req]), null)) return '';
   var results = req.results;
-  var lines = [];
+  var items = [];
   for (var i = 0; i < results.count; i++) {
-    var c = results.objectAtIndex(i).topCandidates(1);
-    if (c.count > 0) lines.push(ObjC.unwrap(c.objectAtIndex(0).string));
+    var obs = results.objectAtIndex(i);
+    var c = obs.topCandidates(1);
+    if (c.count > 0) {
+      var str = ObjC.unwrap(c.objectAtIndex(0).string);
+      var bbox = obs.boundingBox;
+      items.push({
+        text: str,
+        x: bbox.origin.x,
+        y: 1.0 - (bbox.origin.y + bbox.size.height), // Convert to top-to-bottom Y
+        w: bbox.size.width,
+        h: bbox.size.height
+      });
+    }
   }
-  return lines.join('\\n');
+
+  // Detect vertical gutters between multi-column panes (e.g. sidebar vs main document, or LeetCode description vs code editor)
+  // Evaluate in content area (y between 0.08 and 0.92) and exclude wide spanning banners/URL bars (w > 0.48)
+  var gutters = [];
+  var step = 0.003;
+  for (var gx = 0.06; gx <= 0.94; gx += step) {
+    var spanning = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.y >= 0.08 && it.y <= 0.92 && it.w <= 0.48) {
+        if (it.x < gx - 0.003 && (it.x + it.w) > gx + 0.003) {
+          spanning++;
+        }
+      }
+    }
+    if (spanning === 0) {
+      gutters.push(gx);
+    }
+  }
+
+  // Merge contiguous gutter steps into boundary split points
+  var splitPoints = [];
+  if (gutters.length > 0) {
+    var gStart = gutters[0];
+    var gEnd = gutters[0];
+    for (var g = 1; g < gutters.length; g++) {
+      if (gutters[g] - gEnd < 0.015) {
+        gEnd = gutters[g];
+      } else {
+        if (gEnd - gStart >= 0.006) {
+          splitPoints.push((gStart + gEnd) / 2.0);
+        }
+        gStart = gutters[g];
+        gEnd = gutters[g];
+      }
+    }
+    if (gEnd - gStart >= 0.006) {
+      splitPoints.push((gStart + gEnd) / 2.0);
+    }
+  }
+
+  // Segment items into columns and sort strictly top-to-bottom within each column
+  var colBounds = [0.0].concat(splitPoints).concat([1.0]);
+  var columnBlocks = [];
+  for (var c = 0; c < colBounds.length - 1; c++) {
+    var left = colBounds[c];
+    var right = colBounds[c + 1];
+    var colItems = items.filter(function(it) {
+      var midX = it.x + it.w / 2.0;
+      return midX >= left && midX < right;
+    });
+    if (colItems.length > 0) {
+      colItems.sort(function(a, b) { return a.y - b.y; });
+      var lines = [];
+      for (var k = 0; k < colItems.length; k++) {
+        lines.push(colItems[k].text);
+      }
+      columnBlocks.push({
+        width: right - left,
+        lines: lines
+      });
+    }
+  }
+
+  // If there is an overwhelmingly dominant main content pane (width >= 0.40),
+  // place it first so document reading flow is preserved before secondary panels
+  if (columnBlocks.length > 1) {
+    var primary = columnBlocks[0];
+    for (var b = 1; b < columnBlocks.length; b++) {
+      if (columnBlocks[b].width > primary.width + 0.15) {
+        primary = columnBlocks[b];
+      }
+    }
+    if (primary && primary.width >= 0.40 && columnBlocks[0] !== primary) {
+      columnBlocks = [primary].concat(columnBlocks.filter(function(cb) { return cb !== primary; }));
+    }
+  }
+
+  var orderedLines = [];
+  for (var b = 0; b < columnBlocks.length; b++) {
+    for (var k = 0; k < columnBlocks[b].lines.length; k++) {
+      orderedLines.push(columnBlocks[b].lines[k]);
+    }
+    if (b < columnBlocks.length - 1 && columnBlocks[b].lines.length > 0) {
+      orderedLines.push('');
+    }
+  }
+
+  return orderedLines.join('\\n');
 }`;
 
       execFile(
@@ -147,8 +246,25 @@ if (-not $engine) {
 $ocrTask = $engine.RecognizeAsync($bitmap)
 $ocrResult = AwaitTask $ocrTask ([Windows.Media.Ocr.OcrResult])
 
+$linesWithBoxes = @()
 foreach ($line in $ocrResult.Lines) {
-    Write-Output $line.Text
+    $minX = 999999
+    $minY = 999999
+    foreach ($word in $line.Words) {
+        if ($word.BoundingRect.X -lt $minX) { $minX = $word.BoundingRect.X }
+        if ($word.BoundingRect.Y -lt $minY) { $minY = $word.BoundingRect.Y }
+    }
+    $linesWithBoxes += [PSCustomObject]@{
+        Text = $line.Text
+        X = $minX
+        Y = $minY
+    }
+}
+
+# Sort lines spatially (by column block X, then top-to-bottom Y)
+$sorted = $linesWithBoxes | Sort-Object { [Math]::Round($_.X / 400) }, Y
+foreach ($l in $sorted) {
+    Write-Output $l.Text
 }
 `;
 

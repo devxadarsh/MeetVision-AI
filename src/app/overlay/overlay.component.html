@@ -244,15 +244,26 @@
               @if (isScanningScreen()) {
                 <span class="spinner-sm"></span> Scanning...
               } @else {
-                👁️ Scan Screen
+                👁️ + Scan
               }
             </button>
+            @if (selectedBatchId() === 'pending' && pendingScans().length > 0) {
+              <button
+                type="button"
+                class="action-btn icon-only danger"
+                (click)="clearPendingScans()"
+                (mouseenter)="showTooltip($event, 'Clear pending screen scans')"
+                (mouseleave)="hideTooltip()"
+              >
+                🗑
+              </button>
+            }
             <button
               type="button"
               class="action-btn icon-only"
-              [disabled]="!screenVisionStatus()?.lastExtractedText"
+              [disabled]="!displayedCombinedText()"
               (click)="copyScreenText()"
-              (mouseenter)="showTooltip($event, 'Copy extracted screen text')"
+              (mouseenter)="showTooltip($event, 'Copy combined screen text')"
               (mouseleave)="hideTooltip()"
             >
               📋
@@ -791,65 +802,171 @@
           </div>
         </main>
       } @else if (currentTab() === 'screenvision') {
-        <!-- ScreenVision Visible Screen OCR Text Inspector View -->
+        <!-- ScreenVision Multi-Scan Text Inspector View -->
         <main class="screenvision-view">
+          <!-- Session/Batch Selector Bar -->
+          <div class="sv-batch-selector-row">
+            <div class="sv-batch-picker">
+              <span class="sv-batch-icon">📂</span>
+              <select
+                class="sv-batch-select"
+                [value]="selectedBatchId()"
+                (change)="selectBatchId($any($event.target).value)"
+              >
+                <option value="pending">
+                  Active Pending Scans ({{ pendingScans().length }} staged)
+                </option>
+                @for (batch of scanBatches(); track batch.id) {
+                  <option [value]="batch.id">
+                    ✓ {{ formatScanTimestamp(batch.timestamp) }} — {{ batch.questionText ? ('"' + batch.questionText.slice(0, 28) + '..."') : 'Answer Turn' }} ({{ batch.scans.length }} scans)
+                  </option>
+                }
+              </select>
+            </div>
+            @if (selectedBatchId() === 'pending' && pendingScans().length > 0) {
+              <button
+                type="button"
+                class="sv-clear-pending-btn"
+                (click)="clearPendingScans()"
+                title="Discard pending scans"
+              >
+                🗑 Clear
+              </button>
+            }
+          </div>
+
+          <!-- Sub-view Mode Switcher: Combined vs Individual Scans -->
+          <div class="sv-view-tabs">
+            <button
+              type="button"
+              class="sv-view-tab-btn"
+              [class.active]="screenViewMode() === 'combined'"
+              (click)="setScreenViewMode('combined')"
+            >
+              📄 Combined Text
+              @if (displayedRemovedLines() > 0) {
+                <span class="sv-dedup-badge">-{{ displayedRemovedLines() }} overlap lines</span>
+              }
+            </button>
+            <button
+              type="button"
+              class="sv-view-tab-btn"
+              [class.active]="screenViewMode() === 'scans'"
+              (click)="setScreenViewMode('scans')"
+            >
+              📑 Individual Scans ({{ displayedScans().length }})
+            </button>
+          </div>
+
+          <!-- Status / Stats Banner -->
           <div class="screenvision-status-banner">
             <div class="sv-status-left">
               <span class="sv-dot" [class.scanning]="isScanningScreen()"></span>
               <span class="sv-model-label">
                 {{ screenVisionStatus()?.activeModelId || 'pp-ocrv5-mobile' }}
               </span>
-              @if (screenVisionStatus()?.lastScanTimestamp) {
+              @if (selectedBatch(); as batch) {
                 <span class="sv-scan-time">
-                  Scanned: {{ formatScanTimestamp(screenVisionStatus()!.lastScanTimestamp) }}
+                  Answered: {{ formatScanTimestamp(batch.timestamp) }}
+                </span>
+              } @else if (screenVisionStatus()?.lastScanTimestamp) {
+                <span class="sv-scan-time">
+                  Last: {{ formatScanTimestamp(screenVisionStatus()!.lastScanTimestamp) }}
                 </span>
               }
             </div>
             <div class="sv-status-right">
+              @if (displayedRemovedLines() > 0) {
+                <span class="sv-overlap-pill" title="Overlapping duplicate lines filtered out across consecutive scans">
+                  ✂️ {{ displayedRemovedLines() }} lines deduplicated
+                </span>
+              }
               <span class="sv-word-badge">
-                {{ screenVisionStatus()?.lastScanWordCount || 0 }} words captured
+                {{ displayedWordCount() }} words
               </span>
             </div>
           </div>
 
           <div class="screenvision-content-scroll">
-            @if (screenVisionStatus()?.lastExtractedText; as text) {
-              <div class="screenvision-text-card">
-                <div class="text-card-toolbar">
-                  <span class="text-card-title">Visible Screen Text</span>
+            @if (screenViewMode() === 'combined') {
+              @if (displayedCombinedText(); as text) {
+                <div class="screenvision-text-card">
+                  <div class="text-card-toolbar">
+                    <span class="text-card-title">
+                      @if (selectedBatchId() === 'pending') {
+                        COMBINED SCREEN CONTEXT (STAGED FOR GIVE ANSWER)
+                      } @else {
+                        FINAL SCREEN CONTEXT USED FOR ANSWER
+                      }
+                    </span>
+                    <button
+                      type="button"
+                      class="sv-copy-btn"
+                      (click)="copyScreenText()"
+                      title="Copy combined text"
+                    >
+                      📋 Copy Combined
+                    </button>
+                  </div>
+                  <div class="extracted-text-body">
+                    <pre class="extracted-pre">{{ text }}</pre>
+                  </div>
+                </div>
+              } @else {
+                <div class="empty-state">
+                  <div class="empty-icon">👁️</div>
+                  <div class="empty-title">No screen text captured yet</div>
+                  <div class="empty-subtitle">
+                    Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>+ Scan</strong> while scrolling down. Overlapping lines will automatically be filtered out into a combined document.
+                  </div>
                   <button
                     type="button"
-                    class="sv-copy-btn"
-                    (click)="copyScreenText()"
-                    title="Copy to clipboard"
+                    class="empty-btn"
+                    [disabled]="isScanningScreen()"
+                    (click)="scanScreenNow()"
                   >
-                    📋 Copy Text
+                    @if (isScanningScreen()) {
+                      Scanning...
+                    } @else {
+                      👁️ Scan Screen Now
+                    }
                   </button>
                 </div>
-                <div class="extracted-text-body">
-                  <pre class="extracted-pre">{{ text }}</pre>
-                </div>
-              </div>
+              }
             } @else {
-              <div class="empty-state">
-                <div class="empty-icon">👁️</div>
-                <div class="empty-title">No screen text captured yet</div>
-                <div class="empty-subtitle">
-                  Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>Scan Screen</strong> to extract text visible on your display.
-                </div>
-                <button
-                  type="button"
-                  class="empty-btn"
-                  [disabled]="isScanningScreen()"
-                  (click)="scanScreenNow()"
-                >
-                  @if (isScanningScreen()) {
-                    Scanning...
-                  } @else {
-                    👁️ Scan Screen Now
+              <!-- Individual Scans View -->
+              @if (displayedScans().length > 0) {
+                <div class="scans-list">
+                  @for (scan of displayedScans(); track scan.id; let idx = $index) {
+                    <div class="scan-card">
+                      <div class="scan-card-header">
+                        <div class="scan-card-meta">
+                          <span class="scan-idx-badge">Scan #{{ idx + 1 }}</span>
+                          <span class="scan-time">{{ formatScanTimestamp(scan.timestamp) }}</span>
+                          <span class="scan-words">{{ scan.wordCount }} words</span>
+                        </div>
+                        <button
+                          type="button"
+                          class="sv-copy-btn"
+                          (click)="copyScanText(scan)"
+                          title="Copy this scan text"
+                        >
+                          📋 Copy
+                        </button>
+                      </div>
+                      <pre class="scan-text-pre">{{ scan.text }}</pre>
+                    </div>
                   }
-                </button>
-              </div>
+                </div>
+              } @else {
+                <div class="empty-state">
+                  <div class="empty-icon">📑</div>
+                  <div class="empty-title">No individual scans in this session</div>
+                  <div class="empty-subtitle">
+                    Take multiple scans while scrolling. Each capture is preserved here, while the combined version is automatically deduplicated.
+                  </div>
+                </div>
+              }
             }
           </div>
         </main>
@@ -1177,15 +1294,26 @@
                   @if (isScanningScreen()) {
                     Scanning...
                   } @else {
-                    👁️ Scan
+                    👁️ + Scan
                   }
                 </button>
+                @if (selectedBatchId() === 'pending' && pendingScans().length > 0) {
+                  <button
+                    type="button"
+                    class="v2-action-tool icon danger"
+                    (click)="clearPendingScans()"
+                    (mouseenter)="showTooltip($event, 'Clear pending screen scans')"
+                    (mouseleave)="hideTooltip()"
+                  >
+                    🗑
+                  </button>
+                }
                 <button
                   type="button"
                   class="v2-action-tool icon"
-                  [disabled]="!screenVisionStatus()?.lastExtractedText"
+                  [disabled]="!displayedCombinedText()"
                   (click)="copyScreenText()"
-                  (mouseenter)="showTooltip($event, 'Copy extracted screen text')"
+                  (mouseenter)="showTooltip($event, 'Copy combined screen text')"
                   (mouseleave)="hideTooltip()"
                 >
                   📋
@@ -1716,56 +1844,160 @@
             </div>
           </main>
         } @else if (currentTab() === 'screenvision') {
-          <!-- V2 ScreenVision OCR Text View -->
+          <!-- V2 ScreenVision Multi-Scan OCR Text View -->
           <main class="v2-screenvision-container">
+            <!-- Session/Batch Selector Bar -->
+            <div class="v2-sv-batch-bar">
+              <div class="v2-sv-batch-picker">
+                <span class="v2-sv-batch-icon">📂</span>
+                <select
+                  class="v2-sv-batch-select"
+                  [value]="selectedBatchId()"
+                  (change)="selectBatchId($any($event.target).value)"
+                >
+                  <option value="pending">
+                    Active Scans ({{ pendingScans().length }} staged for answer)
+                  </option>
+                  @for (batch of scanBatches(); track batch.id) {
+                    <option [value]="batch.id">
+                      ✓ {{ formatScanTimestamp(batch.timestamp) }} — {{ batch.questionText ? ('"' + batch.questionText.slice(0, 28) + '..."') : 'Answer Turn' }} ({{ batch.scans.length }} scans)
+                    </option>
+                  }
+                </select>
+              </div>
+              @if (selectedBatchId() === 'pending' && pendingScans().length > 0) {
+                <button
+                  type="button"
+                  class="v2-sv-clear-btn"
+                  (click)="clearPendingScans()"
+                  title="Discard pending scans and start fresh"
+                >
+                  🗑 Clear
+                </button>
+              }
+            </div>
+
+            <!-- Sub-view Mode Switcher: Combined vs Individual Scans -->
+            <div class="v2-sv-tabs">
+              <button
+                type="button"
+                class="v2-sv-tab-btn"
+                [class.active]="screenViewMode() === 'combined'"
+                (click)="setScreenViewMode('combined')"
+              >
+                📄 Combined Final Text
+                @if (displayedRemovedLines() > 0) {
+                  <span class="v2-sv-dedup-badge">-{{ displayedRemovedLines() }} overlap lines</span>
+                }
+              </button>
+              <button
+                type="button"
+                class="v2-sv-tab-btn"
+                [class.active]="screenViewMode() === 'scans'"
+                (click)="setScreenViewMode('scans')"
+              >
+                📑 Individual Scans ({{ displayedScans().length }})
+              </button>
+            </div>
+
             <div class="v2-sv-meta-bar">
               <div class="v2-sv-status-pill">
                 <span class="v2-sv-dot" [class.scanning]="isScanningScreen()"></span>
                 <span class="v2-sv-engine-name">{{ screenVisionStatus()?.activeModelId || 'pp-ocrv5-mobile' }}</span>
               </div>
               <div class="v2-sv-stats">
-                <span class="v2-sv-stat-pill">Words: {{ screenVisionStatus()?.lastScanWordCount || 0 }}</span>
-                @if (screenVisionStatus()?.lastScanTimestamp) {
+                @if (displayedRemovedLines() > 0) {
+                  <span class="v2-sv-overlap-pill" title="Overlapping lines filtered out across consecutive scans">
+                    ✂️ {{ displayedRemovedLines() }} lines deduplicated
+                  </span>
+                }
+                <span class="v2-sv-stat-pill">Words: {{ displayedWordCount() }}</span>
+                @if (selectedBatch(); as batch) {
+                  <span class="v2-sv-stat-pill">Answered: {{ formatScanTimestamp(batch.timestamp) }}</span>
+                } @else if (screenVisionStatus()?.lastScanTimestamp) {
                   <span class="v2-sv-stat-pill">Scanned: {{ formatScanTimestamp(screenVisionStatus()!.lastScanTimestamp) }}</span>
                 }
               </div>
             </div>
 
             <div class="v2-sv-scroll">
-              @if (screenVisionStatus()?.lastExtractedText; as text) {
-                <div class="v2-sv-card">
-                  <div class="v2-sv-card-header">
-                    <span class="v2-sv-card-title">LIVE DISPLAY TEXT</span>
+              @if (screenViewMode() === 'combined') {
+                @if (displayedCombinedText(); as text) {
+                  <div class="v2-sv-card">
+                    <div class="v2-sv-card-header">
+                      <span class="v2-sv-card-title">
+                        @if (selectedBatchId() === 'pending') {
+                          COMBINED SCREEN CONTEXT (STAGED FOR GIVE ANSWER)
+                        } @else {
+                          FINAL SCREEN CONTEXT USED FOR ANSWER
+                        }
+                      </span>
+                      <button
+                        type="button"
+                        class="v2-sv-action-btn"
+                        (click)="copyScreenText()"
+                        title="Copy combined text"
+                      >
+                        📋 Copy Combined
+                      </button>
+                    </div>
+                    <pre class="v2-sv-pre">{{ text }}</pre>
+                  </div>
+                } @else {
+                  <div class="v2-empty-hero">
+                    <div class="v2-empty-glyph">👁️</div>
+                    <div class="v2-empty-heading">No Screen Context Captured</div>
+                    <div class="v2-empty-sub">
+                      Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>+ Scan</strong> to extract visible screen content. Take multiple scans while scrolling to capture long problems.
+                    </div>
                     <button
                       type="button"
-                      class="v2-sv-action-btn"
-                      (click)="copyScreenText()"
+                      class="v2-empty-action"
+                      [disabled]="isScanningScreen()"
+                      (click)="scanScreenNow()"
                     >
-                      📋 Copy Text
+                      @if (isScanningScreen()) {
+                        Scanning Display...
+                      } @else {
+                        👁️ Scan Screen Now
+                      }
                     </button>
                   </div>
-                  <pre class="v2-sv-pre">{{ text }}</pre>
-                </div>
+                }
               } @else {
-                <div class="v2-empty-hero">
-                  <div class="v2-empty-glyph">👁️</div>
-                  <div class="v2-empty-heading">No Screen Context Captured</div>
-                  <div class="v2-empty-sub">
-                    Press <strong>Shift twice</strong> (Double Shift), <code>⌘⇧S</code> / <code>Ctrl+Shift+S</code>, or click <strong>Scan</strong> to extract visible screen content.
-                  </div>
-                  <button
-                    type="button"
-                    class="v2-empty-action"
-                    [disabled]="isScanningScreen()"
-                    (click)="scanScreenNow()"
-                  >
-                    @if (isScanningScreen()) {
-                      Scanning Display...
-                    } @else {
-                      👁️ Scan Screen Now
+                <!-- Individual Scans List -->
+                @if (displayedScans().length > 0) {
+                  <div class="v2-scans-list">
+                    @for (scan of displayedScans(); track scan.id; let idx = $index) {
+                      <div class="v2-scan-card">
+                        <div class="v2-scan-card-header">
+                          <div class="v2-scan-card-meta">
+                            <span class="v2-scan-idx-badge">Scan #{{ idx + 1 }}</span>
+                            <span class="v2-scan-time">{{ formatScanTimestamp(scan.timestamp) }}</span>
+                            <span class="v2-scan-words">{{ scan.wordCount }} words</span>
+                          </div>
+                          <button
+                            type="button"
+                            class="v2-sv-action-btn"
+                            (click)="copyScanText(scan)"
+                            title="Copy this scan text"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <pre class="v2-scan-pre">{{ scan.text }}</pre>
+                      </div>
                     }
-                  </button>
-                </div>
+                  </div>
+                } @else {
+                  <div class="v2-empty-hero">
+                    <div class="v2-empty-glyph">📑</div>
+                    <div class="v2-empty-heading">No Individual Scans Captured</div>
+                    <div class="v2-empty-sub">
+                      Take multiple scans while scrolling. Each capture is preserved here, while the combined version is automatically deduplicated.
+                    </div>
+                  </div>
+                }
               }
             </div>
           </main>

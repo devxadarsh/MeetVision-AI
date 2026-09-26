@@ -3012,6 +3012,214 @@ kbd {
   overflow-y: auto;
 }
 
+/* Multi-Scan Batch Selector & Sub-View Controls */
+.sv-batch-selector-row,
+.v2-sv-batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.sv-batch-picker,
+.v2-sv-batch-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sv-batch-icon,
+.v2-sv-batch-icon {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.sv-batch-select,
+.v2-sv-batch-select {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+
+  option {
+    background: #0f172a;
+    color: #f8fafc;
+  }
+
+  &:focus {
+    border-color: #38bdf8;
+  }
+}
+
+.sv-clear-pending-btn,
+.v2-sv-clear-btn {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.3);
+    color: #fff;
+  }
+}
+
+.sv-view-tabs,
+.v2-sv-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+}
+
+.sv-view-tab-btn,
+.v2-sv-tab-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    color: #e2e8f0;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  &.active {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.3);
+    font-weight: 600;
+  }
+}
+
+.sv-dedup-badge,
+.v2-sv-dedup-badge {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(34, 197, 94, 0.18);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #86efac;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.sv-overlap-pill,
+.v2-sv-overlap-pill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #86efac;
+  font-family: 'SF Mono', Consolas, monospace;
+  white-space: nowrap;
+}
+
+/* Individual Scans List */
+.scans-list,
+.v2-scans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scan-card,
+.v2-scan-card {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scan-card-header,
+.v2-scan-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.scan-card-meta,
+.v2-scan-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scan-idx-badge,
+.v2-scan-idx-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #f8fafc;
+  background: #0284c7;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'SF Mono', Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.scan-time,
+.v2-scan-time,
+.scan-words,
+.v2-scan-words {
+  font-size: 10px;
+  color: #94a3b8;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.scan-text-pre,
+.v2-scan-pre {
+  margin: 0;
+  font-family: 'SF Mono', Consolas, Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.2);
+}
+
 /* ==========================================================================
    Tokens Badge & Context Snapshot Styles (Req 1, 2, 3)
    ========================================================================== */

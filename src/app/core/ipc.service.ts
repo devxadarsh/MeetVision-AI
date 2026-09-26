@@ -313,6 +313,11 @@ export class IpcService {
     return this.api.captureScreenVisionNow();
   }
 
+  async clearPendingScreenScans(): Promise<boolean> {
+    if (!this.api) return true;
+    return this.api.clearPendingScreenScans();
+  }
+
   async downloadOcrModel(modelId: OcrModelId): Promise<boolean> {
     if (!this.api) return true;
     return this.api.downloadOcrModel(modelId);

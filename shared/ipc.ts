@@ -226,6 +226,25 @@ export interface ScreenVisionSettings {
   noiseFilteringEnabled?: boolean;
 }
 
+export interface ScreenScanItem {
+  id: string;
+  timestamp: number;
+  text: string;
+  wordCount: number;
+  preview?: string;
+}
+
+export interface ScreenScanBatch {
+  id: string;
+  questionId?: string;
+  questionText?: string;
+  timestamp: number;
+  scans: ScreenScanItem[];
+  finalCombinedText: string;
+  wordCount: number;
+  removedOverlapLinesCount?: number;
+}
+
 export interface ScreenVisionStatus {
   enabled: boolean;
   activeModelId: OcrModelId;
@@ -235,6 +254,10 @@ export interface ScreenVisionStatus {
   lastExtractedText: string;
   installedModels: OcrModelId[];
   error: string | null;
+  pendingScans?: ScreenScanItem[];
+  combinedText?: string;
+  batches?: ScreenScanBatch[];
+  removedOverlapLinesCount?: number;
 }
 
 export interface OcrDownloadProgress {
@@ -400,6 +423,7 @@ export const IPC_CHANNELS = {
   // ScreenVision: Text-first Screen Understanding & OCR
   SCREENVISION_STATUS_GET: 'screenvision:status-get',
   SCREENVISION_CAPTURE_NOW: 'screenvision:capture-now',
+  SCREENVISION_CLEAR_PENDING: 'screenvision:clear-pending',
   SCREENVISION_MODEL_DOWNLOAD: 'screenvision:model-download',
   SCREENVISION_MODEL_DELETE: 'screenvision:model-delete',
   SCREENVISION_DOWNLOAD_PROGRESS: 'screenvision:download-progress',
@@ -449,6 +473,7 @@ export interface ElectronAPI {
   // ScreenVision: Text-first Screen Understanding & OCR Management
   getScreenVisionStatus: () => Promise<ScreenVisionStatus>;
   captureScreenVisionNow: () => Promise<ScreenVisionCaptureResult>;
+  clearPendingScreenScans: () => Promise<boolean>;
   downloadOcrModel: (modelId: OcrModelId) => Promise<boolean>;
   deleteOcrModel: (modelId: OcrModelId) => Promise<boolean>;
   onOcrDownloadProgress: (callback: (progress: OcrDownloadProgress) => void) => () => void;

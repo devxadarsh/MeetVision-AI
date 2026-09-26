@@ -661,7 +661,8 @@ function generateAnswerForQuestion(question: Question, mode?: AnswerMode): void 
   const history = sttService.transcriptManager.getHistory();
   const otherSegments = history.filter((s) => s.speaker === 'Other').map((s) => s.text);
   const userSegments = history.filter((s) => s.speaker === 'You').map((s) => s.text);
-  const screenContext = screenVisionService.getVisibleScreenContext();
+  const { combinedText } = screenVisionService.commitPendingScansForQuestion(question.id, question.text);
+  const screenContext = combinedText || screenVisionService.getVisibleScreenContext();
 
   question.contextSnapshot = {
     otherText: otherSegments.slice(-5).join(' ').trim() || (question.speaker === 'Other' ? question.text : undefined),
@@ -1368,6 +1369,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SCREENVISION_CAPTURE_NOW, async (): Promise<ScreenVisionCaptureResult> => {
     return await screenVisionService.captureScreen();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SCREENVISION_CLEAR_PENDING, async (): Promise<boolean> => {
+    screenVisionService.clearPendingScans();
+    return true;
   });
 
   ipcMain.handle(

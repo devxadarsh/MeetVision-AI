@@ -13,9 +13,12 @@ import {
   ScreenVisionCaptureResult,
   OcrDownloadProgress,
   ScreenVisionSettings,
+  ScreenScanItem,
+  ScreenScanBatch,
 } from '@shared/ipc';
 import { IOcrEngine } from './ocr/ocr-engine.interface';
 import { PpOcrMobileEngine } from './ocr/pp-ocr-mobile';
+import { stitchScreenScans, cleanScreenText } from './ocr/text-stitcher';
 import { StoreService } from './store.service';
 
 /** Built-in technical terms for normalization & correction */
@@ -95,6 +98,12 @@ export class ScreenVisionService {
   private lastScanWordCount = 0;
   private lastExtractedText = '';
   private lastError: string | null = null;
+
+  // Multi-scan state
+  private pendingScans: ScreenScanItem[] = [];
+  private batches: ScreenScanBatch[] = [];
+  private combinedText = '';
+  private removedOverlapLinesCount = 0;
 
   // Dynamic technical words parsed from visible screen
   private screenVocabulary = new Set<string>();
@@ -177,6 +186,10 @@ export class ScreenVisionService {
       lastExtractedText: this.lastExtractedText,
       installedModels: this.getInstalledModelIds(),
       error: this.lastError,
+      pendingScans: [...this.pendingScans],
+      combinedText: this.combinedText,
+      batches: [...this.batches],
+      removedOverlapLinesCount: this.removedOverlapLinesCount,
     };
   }
 
@@ -231,7 +244,8 @@ export class ScreenVisionService {
 
       // 2. Perform OCR text recognition
       const extractedText = await this.activeEngine.recognize(imageBuffer, 1920, 1080);
-      const cleaned = extractedText ? extractedText.trim() : '';
+      const rawText = extractedText ? extractedText.trim() : '';
+      const cleaned = cleanScreenText(rawText);
 
       this.lastExtractedText = cleaned;
       this.lastScanWordCount = cleaned ? cleaned.split(/\s+/).filter(Boolean).length : 0;
@@ -241,11 +255,27 @@ export class ScreenVisionService {
       // 3. Update dynamic technical vocabulary from visible screen
       this.updateScreenVocabulary(cleaned);
 
+      // 4. Record multi-scan item and recompute stitched text with overlap deduplication
+      if (cleaned) {
+        const scanItem: ScreenScanItem = {
+          id: `scan_${Date.now()}_${this.pendingScans.length + 1}`,
+          timestamp: this.lastScanTimestamp,
+          text: cleaned,
+          wordCount: this.lastScanWordCount,
+          preview: cleaned.slice(0, 120).replace(/\s+/g, ' '),
+        };
+        this.pendingScans.push(scanItem);
+
+        const stitch = stitchScreenScans(this.pendingScans);
+        this.combinedText = stitch.text;
+        this.removedOverlapLinesCount = stitch.removedOverlapLines;
+      }
+
       this.isScanning = false;
       this.emitStatus();
 
       return {
-        text: cleaned,
+        text: this.combinedText || cleaned,
         wordCount: this.lastScanWordCount,
         timestamp: this.lastScanTimestamp,
         success: true,
@@ -309,20 +339,82 @@ export class ScreenVisionService {
 
   /**
    * Returns clean visible screen text formatted for LLM prompts.
+   * Uses stitched multi-scan combined text if available, falling back to last extracted text.
    */
   getVisibleScreenContext(): string {
-    if (!this.lastExtractedText || this.lastExtractedText.length === 0) {
+    const text = this.combinedText || this.lastExtractedText;
+    if (!text || text.length === 0) {
       return '';
     }
 
-    // Truncate if very large to conserve prompt tokens
-    const maxChars = 2400;
+    // Allow expanded context (up to 4500 chars) for stitched multi-scan problems
+    const maxChars = 4500;
     const truncated =
-      this.lastExtractedText.length > maxChars
-        ? this.lastExtractedText.substring(0, maxChars) + '\n... [Remaining screen text clipped]'
-        : this.lastExtractedText;
+      text.length > maxChars
+        ? text.substring(0, maxChars) + '\n... [Remaining screen text clipped]'
+        : text;
 
     return truncated;
+  }
+
+  /**
+   * Finalizes pending scans for a question answering turn, archives the batch,
+   * and resets the pending scans buffer for subsequent questions.
+   */
+  commitPendingScansForQuestion(
+    questionId?: string,
+    questionText?: string
+  ): {
+    combinedText: string;
+    scans: ScreenScanItem[];
+    batch?: ScreenScanBatch;
+  } {
+    if (this.pendingScans.length === 0) {
+      return {
+        combinedText: this.getVisibleScreenContext(),
+        scans: [],
+      };
+    }
+
+    const finalCombined = this.combinedText || this.lastExtractedText;
+    const words = finalCombined ? finalCombined.split(/\s+/).filter(Boolean).length : 0;
+    const batch: ScreenScanBatch = {
+      id: `batch_${Date.now()}_${questionId || 'turn'}`,
+      questionId,
+      questionText: questionText?.trim() || undefined,
+      timestamp: Date.now(),
+      scans: [...this.pendingScans],
+      finalCombinedText: finalCombined,
+      wordCount: words,
+      removedOverlapLinesCount: this.removedOverlapLinesCount,
+    };
+
+    this.batches.unshift(batch);
+    if (this.batches.length > 25) {
+      this.batches.pop();
+    }
+
+    const committedScans = [...this.pendingScans];
+    this.pendingScans = [];
+    this.combinedText = '';
+    this.removedOverlapLinesCount = 0;
+    this.emitStatus();
+
+    return {
+      combinedText: finalCombined,
+      scans: committedScans,
+      batch,
+    };
+  }
+
+  /**
+   * Clears pending scans buffer without creating a batch.
+   */
+  clearPendingScans(): void {
+    this.pendingScans = [];
+    this.combinedText = '';
+    this.removedOverlapLinesCount = 0;
+    this.emitStatus();
   }
 
   private updateScreenVocabulary(text: string): void {

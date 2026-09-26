@@ -25,6 +25,8 @@ import {
   AnswerMode,
   AppSettings,
   ScreenVisionStatus,
+  ScreenScanItem,
+  ScreenScanBatch,
 } from '@shared/ipc';
 
 type AnswerModeLabel = 'Short' | 'Detailed' | 'Simple';
@@ -299,6 +301,58 @@ export class OverlayComponent implements OnInit, OnDestroy {
   // ScreenVision Status & OCR Signals
   readonly screenVisionStatus = signal<ScreenVisionStatus | null>(null);
   readonly isScanningScreen = signal<boolean>(false);
+  readonly screenViewMode = signal<'combined' | 'scans'>('combined');
+  readonly selectedBatchId = signal<string>('pending');
+
+  readonly pendingScans = computed<ScreenScanItem[]>(() => {
+    return this.screenVisionStatus()?.pendingScans || [];
+  });
+
+  readonly scanBatches = computed<ScreenScanBatch[]>(() => {
+    return this.screenVisionStatus()?.batches || [];
+  });
+
+  readonly selectedBatch = computed<ScreenScanBatch | null>(() => {
+    const id = this.selectedBatchId();
+    if (id === 'pending') {
+      return null;
+    }
+    return this.scanBatches().find((b) => b.id === id) || null;
+  });
+
+  readonly displayedScans = computed<ScreenScanItem[]>(() => {
+    const batch = this.selectedBatch();
+    if (batch) {
+      return batch.scans;
+    }
+    return this.pendingScans();
+  });
+
+  readonly displayedCombinedText = computed<string>(() => {
+    const batch = this.selectedBatch();
+    if (batch) {
+      return batch.finalCombinedText;
+    }
+    const status = this.screenVisionStatus();
+    return status?.combinedText || status?.lastExtractedText || '';
+  });
+
+  readonly displayedWordCount = computed<number>(() => {
+    const batch = this.selectedBatch();
+    if (batch) {
+      return batch.wordCount;
+    }
+    const text = this.displayedCombinedText();
+    return text ? text.split(/\s+/).filter(Boolean).length : 0;
+  });
+
+  readonly displayedRemovedLines = computed<number>(() => {
+    const batch = this.selectedBatch();
+    if (batch) {
+      return batch.removedOverlapLinesCount || 0;
+    }
+    return this.screenVisionStatus()?.removedOverlapLinesCount || 0;
+  });
 
   // Question List Signal
   readonly questions = signal<Question[]>([]);
@@ -1952,17 +2006,43 @@ export class OverlayComponent implements OnInit, OnDestroy {
   }
 
   async copyScreenText(): Promise<void> {
-    const text = this.screenVisionStatus()?.lastExtractedText;
+    const text = this.displayedCombinedText();
     if (!text) {
       this.showToast('No screen text to copy.');
       return;
     }
     const ok = await this.writeToClipboard(text);
     if (ok) {
-      this.showToast('Screen OCR text copied to clipboard!');
+      this.showToast('Combined screen text copied to clipboard!');
     } else {
       this.showToast('Could not access clipboard.');
     }
+  }
+
+  async copyScanText(scan: ScreenScanItem): Promise<void> {
+    if (!scan?.text) {
+      this.showToast('No scan text to copy.');
+      return;
+    }
+    const ok = await this.writeToClipboard(scan.text);
+    if (ok) {
+      this.showToast('Scan text copied to clipboard!');
+    } else {
+      this.showToast('Could not access clipboard.');
+    }
+  }
+
+  async clearPendingScans(): Promise<void> {
+    await this.ipcService.clearPendingScreenScans();
+    this.showToast('Cleared pending screen scans');
+  }
+
+  setScreenViewMode(mode: 'combined' | 'scans'): void {
+    this.screenViewMode.set(mode);
+  }
+
+  selectBatchId(id: string): void {
+    this.selectedBatchId.set(id);
   }
 
   formatScanTimestamp(timestamp: number | null | undefined): string {

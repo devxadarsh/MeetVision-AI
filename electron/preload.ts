@@ -188,6 +188,9 @@ const api: ElectronAPI = {
   captureScreenVisionNow: (): Promise<ScreenVisionCaptureResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_CAPTURE_NOW);
   },
+  clearPendingScreenScans: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_CLEAR_PENDING);
+  },
   downloadOcrModel: (modelId: OcrModelId): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SCREENVISION_MODEL_DOWNLOAD, modelId);
   },
